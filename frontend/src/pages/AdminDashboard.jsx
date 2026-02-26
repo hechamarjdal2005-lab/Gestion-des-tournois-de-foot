@@ -16,7 +16,6 @@ const AdminDashboard = () => {
   const [showTournamentForm, setShowTournamentForm] = useState(false);
   const [showRefereeForm, setShowRefereeForm] = useState(false);
   
-  // بيانات الفريق (مع الصورة)
   const [teamData, setTeamData] = useState({ name: '', short_name: '', founded_date: '', colors: '' });
   const [managerData, setManagerData] = useState({ name: '', email: '' });
   const [coachData, setCoachData] = useState({ name: '', email: '' });
@@ -29,9 +28,7 @@ const AdminDashboard = () => {
   const [message, setMessage] = useState({ text: '', type: '' });
   const [refMessage, setRefMessage] = useState({ text: '', type: '' });
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     setLoading(true);
@@ -39,11 +36,7 @@ const AdminDashboard = () => {
       const [tRes, tmRes] = await Promise.all([api.get('/tournaments'), api.get('/teams')]);
       setTournaments(tRes.data);
       setTeams(tmRes.data);
-    } catch (error) {
-      console.error("Error fetching data:", error);
-    } finally {
-      setLoading(false);
-    }
+    } catch (error) { console.error("Error:", error); } finally { setLoading(false); }
   };
 
   const handleCreateTeam = async (e) => {
@@ -61,18 +54,17 @@ const AdminDashboard = () => {
       formData.append('coach_email', coachData.email);
       if (teamLogo) formData.append('logo', teamLogo);
 
-      await api.post('/teams', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const res = await api.post('/teams', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       
-      setMessage({ text: '✅ تم إنشاء الفريق بنجاح!', type: 'success' });
+      setMessage({ text: `✅ ${res.data.message}`, type: 'success' });
+      if(res.data.details) console.log("Details:", res.data.details);
+      
       setShowTeamForm(false);
       resetForms();
       fetchData();
     } catch (error) {
       setMessage({ text: `❌ ${error.response?.data?.detail || 'فشل الإنشاء'}`, type: 'error' });
-    } finally {
-      setLoading(false);
-      setTimeout(() => setMessage({ text: '', type: '' }), 5000);
-    }
+    } finally { setLoading(false); setTimeout(() => setMessage({ text: '', type: '' }), 5000); }
   };
 
   const handleCreateTournament = async (e) => {
@@ -80,17 +72,12 @@ const AdminDashboard = () => {
     setLoading(true);
     try {
       const res = await api.post('/tournaments', { ...tData, team_ids: selectedTeamIds });
-      setMessage({ text: '✅ تم إنشاء البطولة بنجاح!', type: 'success' });
-      setShowTournamentForm(false);
-      resetForms();
-      fetchData();
+      setMessage({ text: '✅ تم إنشاء البطولة!', type: 'success' });
+      setShowTournamentForm(false); resetForms(); fetchData();
       setTimeout(() => navigate(`/tournament/${res.data.id}`), 1500);
     } catch (error) {
-      setMessage({ text: `❌ ${error.response?.data?.detail || 'فشل الإنشاء'}`, type: 'error' });
-    } finally {
-      setLoading(false);
-      setTimeout(() => setMessage({ text: '', type: '' }), 5000);
-    }
+      setMessage({ text: `❌ ${error.response?.data?.detail || 'فشل'}`, type: 'error' });
+    } finally { setLoading(false); setTimeout(() => setMessage({ text: '', type: '' }), 5000); }
   };
 
   const handleCreateReferee = async (e) => {
@@ -98,37 +85,28 @@ const AdminDashboard = () => {
     setLoading(true);
     try {
       await api.post('/referees', refereeData);
-      setRefMessage({ text: '✅ تم إضافة الحكم بنجاح!', type: 'success' });
-      setShowRefereeForm(false);
-      setRefereeData({ name: '', email: '' });
+      setRefMessage({ text: '✅ تم إضافة الحكم!', type: 'success' });
+      setShowRefereeForm(false); setRefereeData({ name: '', email: '' });
       setTimeout(() => setRefMessage({ text: '', type: '' }), 5000);
     } catch (error) {
-      setRefMessage({ text: `❌ ${error.response?.data?.detail || 'فشل الإضافة'}`, type: 'error' });
-    } finally {
-      setLoading(false);
-    }
+      setRefMessage({ text: `❌ ${error.response?.data?.detail || 'فشل'}`, type: 'error' });
+    } finally { setLoading(false); }
   };
 
   const handleDeleteTeam = async (id, name) => {
-    if(!window.confirm(`⚠️ تحذير خطير: هل أنت متأكد من حذف فريق "${name}"؟\nسيتم حذف:\n- الفريق نهائياً\n- حساب المسؤول والمدرب\n- جميع اللاعبين وإحصائياتهم\n\nهذا الإجراء لا يمكن التراجع عنه!`)) return;
-    
+    if(!window.confirm(`⚠️ حذف فريق "${name}"؟ سيحذف جميع الحسابات المرتبطة.`)) return;
     try {
       await api.delete(`/teams/${id}`);
-      alert("✅ تم حذف الفريق وجميع البيانات المرتبطة به بنجاح.");
+      alert("✅ تم الحذف بنجاح.");
       fetchData();
-    } catch (error) {
-      alert(`❌ فشل الحذف: ${error.response?.data?.detail || error.message}`);
-    }
+    } catch (error) { alert(`❌ فشل: ${error.response?.data?.detail}`); }
   };
 
   const resetForms = () => {
     setTeamData({ name: '', short_name: '', founded_date: '', colors: '' });
-    setManagerData({ name: '', email: '' });
-    setCoachData({ name: '', email: '' });
-    setTeamLogo(null);
-    setTData({ name: '', type: 'league', start_date: '', end_date: '' });
-    setSelectedTeamIds([]);
-    setRefereeData({ name: '', email: '' });
+    setManagerData({ name: '', email: '' }); setCoachData({ name: '', email: '' });
+    setTeamLogo(null); setTData({ name: '', type: 'league', start_date: '', end_date: '' });
+    setSelectedTeamIds([]); setRefereeData({ name: '', email: '' });
   };
 
   const toggleTeamSelection = (id) => {
@@ -138,20 +116,13 @@ const AdminDashboard = () => {
   return (
     <div className="container mx-auto p-6 bg-gray-50 min-h-screen">
       <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-lg shadow-md">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-800">لوحة تحكم المسؤول العام</h2>
-          <p className="text-gray-500 mt-1">مرحباً بك، {user?.email}</p>
-        </div>
-        <button onClick={logout} className="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition shadow">تسجيل خروج</button>
+        <div><h2 className="text-3xl font-bold text-gray-800">لوحة المسؤول العام</h2><p className="text-gray-500 mt-1">مرحباً، {user?.email}</p></div>
+        <button onClick={logout} className="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600">خروج</button>
       </div>
 
-      {message.text && (
-        <div className={`p-4 mb-6 rounded-lg shadow-md border-r-4 ${message.type === 'success' ? 'bg-green-100 text-green-800 border-green-500' : 'bg-red-100 text-red-800 border-red-500'}`}>
-          {message.text}
-        </div>
-      )}
+      {message.text && <div className={`p-4 mb-6 rounded ${message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{message.text}</div>}
 
-      <div className="flex gap-4 mb-6 border-b border-gray-300 overflow-x-auto">
+      <div className="flex gap-4 mb-6 border-b border-gray-300">
         {['teams', 'tournaments', 'referees'].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} className={`pb-3 px-6 text-lg font-semibold capitalize ${activeTab === tab ? 'border-b-4 border-blue-600 text-blue-600' : 'text-gray-500'}`}>
             {tab === 'teams' ? '🛡️ الفرق' : tab === 'tournaments' ? '🏆 البطولات' : '⚖️ الحكام'}
@@ -179,13 +150,10 @@ const AdminDashboard = () => {
                   <input type="date" className="border p-2 rounded w-full" value={teamData.founded_date} onChange={e => setTeamData({...teamData, founded_date: e.target.value})} />
                   <input placeholder="الألوان" className="border p-2 rounded w-full" value={teamData.colors} onChange={e => setTeamData({...teamData, colors: e.target.value})} />
                 </div>
-                
-                {/* رفع شعار الفريق */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">شعار الفريق</label>
-                  <input type="file" accept="image/*" onChange={(e) => setTeamLogo(e.target.files[0])} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                  <input type="file" accept="image/*" onChange={(e) => setTeamLogo(e.target.files[0])} className="block w-full text-sm text-gray-500"/>
                 </div>
-
                 <div className="grid grid-cols-2 gap-4 border-t pt-4">
                   <input placeholder="اسم المسؤول" required className="border p-2 rounded" value={managerData.name} onChange={e => setManagerData({...managerData, name: e.target.value})} />
                   <input type="email" placeholder="إيميل المسؤول" required className="border p-2 rounded" value={managerData.email} onChange={e => setManagerData({...managerData, email: e.target.value})} />
@@ -204,15 +172,20 @@ const AdminDashboard = () => {
                     <tr key={t.id} className="border-b hover:bg-gray-50">
                       <td className="p-3">{i+1}</td>
                       <td className="p-3">
-                        {t.logo ? <img src={`http://127.0.0.1:8000/${t.logo}`} alt="logo" className="h-10 w-10 object-cover rounded-full" /> : <span className="text-gray-400">-</span>}
+                        {t.logo ? (
+                          <img 
+                            src={`http://127.0.0.1:8000${t.logo}`} 
+                            alt={t.name} 
+                            className="h-10 w-10 object-cover rounded-full border border-gray-300"
+                            onError={(e) => { e.target.onerror = null; e.target.src="https://via.placeholder.com/40?text=No+Img"; }}
+                          />
+                        ) : <span className="text-gray-400">-</span>}
                       </td>
                       <td className="p-3 font-bold">{t.name}</td>
                       <td className="p-3">{t.short_name}</td>
                       <td className="p-3">{t.colors}</td>
                       <td className="p-3">
-                        <button onClick={() => handleDeleteTeam(t.id, t.name)} className="text-red-600 hover:text-red-800 font-bold text-sm bg-red-50 px-3 py-1 rounded flex items-center gap-1">
-                          🗑️ حذف
-                        </button>
+                        <button onClick={() => handleDeleteTeam(t.id, t.name)} className="text-red-600 hover:text-red-800 font-bold text-sm bg-red-50 px-3 py-1 rounded flex items-center gap-1">🗑️ حذف</button>
                       </td>
                     </tr>
                   ))}

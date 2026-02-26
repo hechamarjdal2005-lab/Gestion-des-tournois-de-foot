@@ -26,20 +26,18 @@ def check_role(user: User, allowed_roles: List[str]):
         raise HTTPException(status_code=403, detail="ليس لديك الصلاحيات الكافية")
 
 # ==========================================
-# دالة مساعدة: إنشاء المستخدمين وإرسال الإيميل (ذكية)
+# دالة مساعدة: إنشاء المستخدمين وإرسال الإيميل
 # ==========================================
 def create_user_and_send_invite(db: Session, name: str, email: str, role: str, team_id: Optional[int] = None, player_id: Optional[int] = None):
     user = db.query(User).filter(User.email == email).first()
     
     if not user:
-        # --- حالة 1: مستخدم جديد (إنشاء + إرسال إيميل) ---
         temp_pass = "TempPass123!"
         user = User(name=name, email=email, hashed_password=get_password_hash(temp_pass), role=role, is_active=True)
         db.add(user)
         db.commit()
         db.refresh(user)
         
-        # ربط السجلات المساعدة
         if role == "coach" and team_id:
             coach = Coach(name=name, email=email, team_id=team_id, user_id=user.id)
             db.add(coach)
@@ -54,7 +52,6 @@ def create_user_and_send_invite(db: Session, name: str, email: str, role: str, t
             db.add(ref)
             db.commit()
 
-        # إرسال الإيميل
         reset_token = create_access_token(data={"sub": user.email, "type": "reset", "role": role}, expires_delta=timedelta(days=3))
         print(f"\n📧 [NEW USER] Sending invite to: {email}")
         try:
@@ -63,33 +60,26 @@ def create_user_and_send_invite(db: Session, name: str, email: str, role: str, t
         except Exception as e:
             print(f"❌ Email sending failed: {e}")
         
-        return {
-            "user_id": user.id, 
-            "temp_password": temp_pass, 
-            "is_new": True,
-            "message": "تم إنشاء المستخدم وإرسال الإيميل."
-        }
+        return {"user_id": user.id, "temp_password": temp_pass, "is_new": True, "message": "تم الإنشاء والإرسال."}
     
     else:
-        # --- حالة 2: مستخدم موجود (لا إنشاء ولا إرسال) ---
-        print(f"\n⚠️ [EXISTING USER] Email '{email}' already exists (ID: {user.id}). Skipping creation.")
-        
-        return {
-            "user_id": user.id, 
-            "temp_password": None, 
-            "is_new": False,
-            "message": f"تحذير: الإيميل '{email}' مستخدم مسبقاً."
-        }
+        print(f"\n⚠️ [EXISTING USER] Email '{email}' already exists.")
+        return {"user_id": user.id, "temp_password": None, "is_new": False, "message": "الإيميل مستخدم مسبقاً."}
 
+# ==========================================
+# دالة حفظ الملفات (ترجع مسار نسبي فقط)
+# ==========================================
 def save_uploaded_file(file: UploadFile, folder: str) -> str:
     file_path = os.path.join(UPLOAD_DIR, folder, file.filename)
     os.makedirs(os.path.dirname(file_path), exist_ok=True)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+    
+    # نرجع المسار النسبي فقط ليبدأ بـ /
     return f"/{file_path}"
 
 # ==========================================
-# 1. إدارة البطولات (Tournaments)
+# 1. إدارة البطولات
 # ==========================================
 
 @router.post("/tournaments", response_model=dict)
@@ -204,7 +194,7 @@ def generate_matches(t_id: int, db: Session = Depends(get_db), current_user: Use
 
     elif tournament.type == "knockout":
         if len(teams) & (len(teams) - 1) != 0:
-             raise HTTPException(400, "في خروج المغلوب، يجب أن يكون عدد الفرق قوة لـ 2 (2, 4, 8, 16...).")
+             raise HTTPException(400, "في خروج المغلوب، يجب أن يكون عدد الفرق قوة لـ 2.")
         
         random.shuffle(teams)
         current_round_teams = teams[:]
@@ -239,14 +229,14 @@ def advance_knockout_round(t_id: int, db: Session = Depends(get_db), current_use
     check_role(current_user, ["super_admin"])
     tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
     if not tournament or tournament.type != "knockout":
-        raise HTTPException(400, "غير متاح إلا لبطولات خروج المغلوب")
+        raise HTTPException(400, "غير متاح إلا لخروج المغلوب")
     
     all_matches = db.query(Match).filter(Match.tournament_id == t_id).order_by(Match.round_number).all()
     if not all_matches: raise HTTPException(400, "لا توجد مباريات")
     
     max_round = max(m.round_number for m in all_matches)
-    
     found_round = None
+    
     for r in range(1, max_round):
         round_matches = [m for m in all_matches if m.round_number == r]
         if round_matches and all(m.status == 'finished' for m in round_matches):
@@ -282,7 +272,6 @@ def advance_knockout_round(t_id: int, db: Session = Depends(get_db), current_use
         t_match.status = "scheduled"
         t_match.score_home = 0
         t_match.score_away = 0
-        
         winner_idx += 1
     
     db.commit()
@@ -291,40 +280,26 @@ def advance_knockout_round(t_id: int, db: Session = Depends(get_db), current_use
 @router.get("/tournaments/{t_id}/standings", response_model=List[dict])
 def get_tournament_standings(t_id: int, db: Session = Depends(get_db)):
     tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
-    if not tournament or tournament.type != "league":
-        return []
+    if not tournament or tournament.type != "league": return []
     
     standings = {}
     for team in tournament.teams:
-        standings[team.id] = {
-            "id": team.id, "name": team.name, "logo": team.logo,
-            "played": 0, "won": 0, "drawn": 0, "lost": 0,
-            "gf": 0, "ga": 0, "gd": 0, "points": 0
-        }
+        standings[team.id] = {"id": team.id, "name": team.name, "logo": team.logo, "played": 0, "won": 0, "drawn": 0, "lost": 0, "gf": 0, "ga": 0, "gd": 0, "points": 0}
     
     matches = db.query(Match).filter(Match.tournament_id == t_id, Match.status == "finished").all()
     
     for m in matches:
         if m.home_team_id not in standings or m.away_team_id not in standings: continue
-        home = standings[m.home_team_id]
-        away = standings[m.away_team_id]
-        
+        home, away = standings[m.home_team_id], standings[m.away_team_id]
         home["played"] += 1; away["played"] += 1
         home["gf"] += m.score_home; home["ga"] += m.score_away
         away["gf"] += m.score_away; away["ga"] += m.score_home
         
-        if m.score_home > m.score_away:
-            home["won"] += 1; home["points"] += 3
-            away["lost"] += 1
-        elif m.score_home < m.score_away:
-            away["won"] += 1; away["points"] += 3
-            home["lost"] += 1
-        else:
-            home["drawn"] += 1; home["points"] += 1
-            away["drawn"] += 1; away["points"] += 1
+        if m.score_home > m.score_away: home["won"] += 1; home["points"] += 3; away["lost"] += 1
+        elif m.score_home < m.score_away: away["won"] += 1; away["points"] += 3; home["lost"] += 1
+        else: home["drawn"] += 1; home["points"] += 1; away["drawn"] += 1; away["points"] += 1
             
-        home["gd"] = home["gf"] - home["ga"]
-        away["gd"] = away["gf"] - away["ga"]
+        home["gd"] = home["gf"] - home["ga"]; away["gd"] = away["gf"] - away["ga"]
     
     return sorted(standings.values(), key=lambda x: (x["points"], x["gd"], x["gf"]), reverse=True)
 
@@ -337,30 +312,17 @@ def next_round_action(t_id: int, db: Session = Depends(get_db), current_user: Us
     if tournament.type == "league":
         all_matches = db.query(Match).filter(Match.tournament_id == t_id).all()
         if not all_matches: raise HTTPException(400, "لا توجد مباريات")
-        
         max_round = max(m.round_number for m in all_matches)
         current_round_num = None
-        
         for r in range(1, max_round + 1):
-            round_matches = [m for m in all_matches if m.round_number == r]
-            if any(m.status != "finished" for m in round_matches):
-                current_round_num = r
-                break
-        
-        if current_round_num is None:
-            return {"message": "✅ انتهت جميع جولات البطولة!"}
-        
-        round_matches = [m for m in all_matches if m.round_number == current_round_num]
-        unfinished = [m for m in round_matches if m.status != "finished"]
-        
-        if unfinished:
-            raise HTTPException(400, f"لا تزال هناك {len(unfinished)} مباراة لم تنتهِ في الجولة {current_round_num}.")
-        
+            if any(m.status != "finished" for m in all_matches if m.round_number == r):
+                current_round_num = r; break
+        if current_round_num is None: return {"message": "✅ انتهت البطولة!"}
+        unfinished = [m for m in all_matches if m.round_number == current_round_num and m.status != "finished"]
+        if unfinished: raise HTTPException(400, f"باقي {len(unfinished)} مباريات في الجولة {current_round_num}.")
         return {"message": f"✅ الجولة {current_round_num} مكتملة."}
-
     elif tournament.type == "knockout":
         return advance_knockout_round(t_id, db, current_user)
-    
     return {"message": "تم"}
 
 @router.post("/matches/update-details", response_model=dict)
@@ -369,167 +331,114 @@ def update_match_details(match_id: int, details: MatchUpdate, db: Session = Depe
     match = db.query(Match).filter(Match.id == match_id).first()
     if not match: raise HTTPException(404, "غير موجودة")
     if details.score_home is not None:
-        match.score_home = details.score_home
-        match.score_away = details.score_away
-        match.status = details.status
+        match.score_home = details.score_home; match.score_away = details.score_away; match.status = details.status
     if details.stadium_name:
         stadium = db.query(Stadium).filter(Stadium.name == details.stadium_name).first()
-        if not stadium:
-            stadium = Stadium(name=details.stadium_name)
-            db.add(stadium); db.commit(); db.refresh(stadium)
+        if not stadium: stadium = Stadium(name=details.stadium_name); db.add(stadium); db.commit(); db.refresh(stadium)
         match.stadium_id = stadium.id
     if details.match_time: match.match_time = details.match_time
     db.commit()
     return {"message": "تم التحديث"}
 
 # ==========================================
-# 2. إدارة الفرق (Teams) - مع الحذف الذكي والإيميل المشروط
+# 2. إدارة الفرق
 # ==========================================
 
 @router.post("/teams", response_model=dict)
 def create_team(
-    name: str = Form(...), 
-    short_name: str = Form(None), 
-    founded_date: str = Form(None), 
-    colors: str = Form(None), 
-    manager_name: str = Form(...), 
-    manager_email: str = Form(...),
-    coach_name: str = Form(...), 
-    coach_email: str = Form(...),
-    logo: UploadFile = File(None),
-    db: Session = Depends(get_db), 
-    current_user: User = Depends(get_current_user)
+    name: str = Form(...), short_name: str = Form(None), founded_date: str = Form(None), colors: str = Form(None),
+    manager_name: str = Form(...), manager_email: str = Form(...), coach_name: str = Form(...), coach_email: str = Form(...),
+    logo: UploadFile = File(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
 ):
     check_role(current_user, ["super_admin"])
-    
-    # معالجة الشعار
     logo_path = None
-    if logo and logo.filename:
-        logo_path = save_uploaded_file(logo, "teams")
+    if logo and logo.filename: logo_path = save_uploaded_file(logo, "teams")
     
-    # معالجة التاريخ (تحويل صحيح لتجنب خطأ dict)
     parsed_founded_date = None
     if founded_date and founded_date.strip():
-        try:
-            parsed_founded_date = datetime.strptime(founded_date, "%Y-%m-%d").date()
-        except ValueError:
-            parsed_founded_date = None
+        try: parsed_founded_date = datetime.strptime(founded_date, "%Y-%m-%d").date()
+        except ValueError: parsed_founded_date = None
 
-    # 1. التعامل مع المسؤول
     manager_result = create_user_and_send_invite(db, manager_name, manager_email, "team_manager")
     manager_id = manager_result.get("user_id")
-    
-    if not manager_id:
-        raise HTTPException(status_code=500, detail="فشل التعامل مع حساب المسؤول")
+    if not manager_id: raise HTTPException(status_code=500, detail="فشل حساب المسؤول")
 
-    # 2. إنشاء الفريق
     try:
-        new_team = Team(
-            name=name, 
-            short_name=short_name, 
-            founded_date=parsed_founded_date, 
-            colors=colors, 
-            logo=logo_path, 
-            manager_id=manager_id
-        )
-        db.add(new_team)
-        db.commit()
-        db.refresh(new_team)
+        new_team = Team(name=name, short_name=short_name, founded_date=parsed_founded_date, colors=colors, logo=logo_path, manager_id=manager_id)
+        db.add(new_team); db.commit(); db.refresh(new_team)
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"حدث خطأ أثناء إنشاء الفريق: {str(e)}")
+        db.rollback(); raise HTTPException(status_code=500, detail=f"خطأ في الفريق: {str(e)}")
     
-    # 3. التعامل مع المدرب (منطق ذكي)
     coach_result = create_user_and_send_invite(db, coach_name, coach_email, "coach", team_id=None)
     coach_user_id = coach_result.get("user_id")
-    
     warnings = []
     if not coach_result.get("is_new"): warnings.append(coach_result.get("message"))
     if not manager_result.get("is_new"): warnings.append(manager_result.get("message"))
 
     existing_coach = db.query(Coach).filter(Coach.user_id == coach_user_id).first()
     if existing_coach:
-        existing_coach.team_id = new_team.id
-        existing_coach.name = coach_name
-        db.commit()
+        existing_coach.team_id = new_team.id; existing_coach.name = coach_name; db.commit()
     else:
         new_coach = Coach(name=coach_name, email=coach_email, team_id=new_team.id, user_id=coach_user_id)
-        db.add(new_coach)
-        db.commit()
+        db.add(new_coach); db.commit()
 
-    response_message = "تم إنشاء الفريق بنجاح."
-    if warnings: response_message += " ملاحظات: " + " | ".join(warnings)
-
-    return {
-        "message": response_message, 
-        "team_id": new_team.id,
-        "details": {
-            "manager_status": "جديد (تم إرسال الإيميل)" if manager_result.get("is_new") else "موجود مسبقاً",
-            "coach_status": "جديد (تم إرسال الإيميل)" if coach_result.get("is_new") else "موجود مسبقاً",
-            "manager_temp_pass": manager_result.get("temp_password"),
-            "coach_temp_pass": coach_result.get("temp_password")
-        }
-    }
+    msg = "تم إنشاء الفريق بنجاح."
+    if warnings: msg += " ملاحظات: " + " | ".join(warnings)
+    return {"message": msg, "team_id": new_team.id, "details": {"manager_status": "جديد" if manager_result.get("is_new") else "قديم", "coach_status": "جديد" if coach_result.get("is_new") else "قديم"}}
 
 @router.get("/teams", response_model=List[dict])
 def get_all_teams(db: Session = Depends(get_db)):
-    return [{"id": t.id, "name": t.name, "short_name": t.short_name, "colors": t.colors, "logo": t.logo} for t in db.query(Team).all()]
+    teams = db.query(Team).all()
+    result = []
+    for t in teams:
+        # نضمن أن الرابط نسبي دائماً
+        logo_url = t.logo
+        if logo_url and logo_url.startswith("http://127.0.0.1:8000"):
+            logo_url = logo_url.replace("http://127.0.0.1:8000", "")
+        
+        result.append({"id": t.id, "name": t.name, "short_name": t.short_name, "colors": t.colors, "logo": logo_url})
+    return result
 
 @router.delete("/teams/{team_id}", response_model=dict)
 def delete_team(team_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     check_role(current_user, ["super_admin"])
-    
     team = db.query(Team).filter(Team.id == team_id).first()
-    if not team:
-        raise HTTPException(status_code=404, detail="الفريق غير موجود")
+    if not team: raise HTTPException(status_code=404, detail="الفريق غير موجود")
     
     try:
-        # جمع المعرفات
         players = db.query(Player).filter(Player.team_id == team_id).all()
         player_ids = [p.id for p in players]
         user_ids_to_delete = [p.user_id for p in players if p.user_id]
         
         coach = db.query(Coach).filter(Coach.team_id == team_id).first()
         coach_id = coach.id if coach else None
-        if coach and coach.user_id:
-            user_ids_to_delete.append(coach.user_id)
-        if team.manager_id:
-            user_ids_to_delete.append(team.manager_id)
+        if coach and coach.user_id: user_ids_to_delete.append(coach.user_id)
+        if team.manager_id: user_ids_to_delete.append(team.manager_id)
         
         unique_user_ids = list(set([uid for uid in user_ids_to_delete if uid]))
 
-        # الحذف بالترتيب الآمن
         if player_ids:
             db.query(PlayerStat).filter(PlayerStat.player_id.in_(player_ids)).delete(synchronize_session=False)
-        
-        if player_ids:
             db.query(Player).filter(Player.id.in_(player_ids)).update({"user_id": None}, synchronize_session=False)
             db.query(Player).filter(Player.id.in_(player_ids)).delete(synchronize_session=False)
 
         if unique_user_ids:
             db.query(Coach).filter(Coach.user_id.in_(unique_user_ids)).update({"user_id": None}, synchronize_session=False)
         
-        if coach_id:
-            db.query(Coach).filter(Coach.id == coach_id).delete(synchronize_session=False)
-
-        if unique_user_ids:
-            db.query(Team).filter(Team.manager_id.in_(unique_user_ids)).update({"manager_id": None}, synchronize_session=False)
+        if coach_id: db.query(Coach).filter(Coach.id == coach_id).delete(synchronize_session=False)
+        if unique_user_ids: db.query(Team).filter(Team.manager_id.in_(unique_user_ids)).update({"manager_id": None}, synchronize_session=False)
 
         db.flush()
         db.execute(tournament_teams.delete().where(tournament_teams.c.team_id == team_id))
         db.delete(team)
         db.flush()
 
-        if unique_user_ids:
-            db.query(User).filter(User.id.in_(unique_user_ids)).delete(synchronize_session=False)
+        if unique_user_ids: db.query(User).filter(User.id.in_(unique_user_ids)).delete(synchronize_session=False)
         
         db.commit()
-        return {"message": "تم حذف الفريق وجميع البيانات المرتبطة به بنجاح."}
-        
+        return {"message": "تم الحذف بنجاح."}
     except Exception as e:
-        db.rollback()
-        print(f"❌ Critical Error deleting team {team_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"حدث خطأ أثناء الحذف: {str(e)}")
+        db.rollback(); print(f"❌ Error: {str(e)}"); raise HTTPException(status_code=500, detail=str(e))
 
 # ==========================================
 # 3. بيانات المستخدم والإحصائيات
@@ -558,11 +467,7 @@ def get_my_players(db: Session = Depends(get_db), current_user: User = Depends(g
     return [{"id": p.id, "name": p.name, "position": p.position, "jersey_number": p.jersey_number, "photo": p.photo} for p in db.query(Player).filter(Player.team_id == team_id).all()]
 
 @router.post("/players", response_model=dict)
-def create_player(
-    name: str = Form(...), position: str = Form(...), jersey_number: int = Form(...),
-    email: str = Form(None), photo: UploadFile = File(None),
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
-):
+def create_player(name: str = Form(...), position: str = Form(...), jersey_number: int = Form(...), email: str = Form(None), photo: UploadFile = File(None), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     team_id = None
     if current_user.role == "team_manager":
         t = db.query(Team).filter(Team.manager_id == current_user.id).first()
@@ -577,10 +482,7 @@ def create_player(
     
     new_player = Player(name=name, position=position, jersey_number=jersey_number, team_id=team_id, user_id=user_id, photo=photo_path)
     db.add(new_player); db.commit(); db.refresh(new_player)
-    
-    if email and user_id:
-        new_player.user_id = user_id
-        db.commit()
+    if email and user_id: new_player.user_id = user_id; db.commit()
     return {"message": "تم إضافة اللاعب", "player_id": new_player.id}
 
 @router.post("/referees", response_model=dict)
@@ -599,26 +501,8 @@ def get_advanced_statistics(t_id: int, db: Session = Depends(get_db)):
     tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
     if not tournament: raise HTTPException(404, "غير موجودة")
     
-    players_stats = db.query(
-        Player.name, Player.jersey_number, Team.name.label("team_name"), 
-        func.sum(PlayerStat.goals).label("goals"),
-        func.sum(PlayerStat.assists).label("assists"),
-        func.sum(PlayerStat.yellow_cards).label("yellow_cards"),
-        func.sum(PlayerStat.red_cards).label("red_cards")
-    ).join(Team).join(PlayerStat).join(Match).filter(
-        Match.tournament_id == t_id
-    ).group_by(Player.id, Player.name, Player.jersey_number, Team.name).all()
+    players_stats = db.query(Player.name, Player.jersey_number, Team.name.label("team_name"), func.sum(PlayerStat.goals).label("goals"), func.sum(PlayerStat.assists).label("assists"), func.sum(PlayerStat.yellow_cards).label("yellow_cards"), func.sum(PlayerStat.red_cards).label("red_cards")).join(Team).join(PlayerStat).join(Match).filter(Match.tournament_id == t_id).group_by(Player.id, Player.name, Player.jersey_number, Team.name).all()
     
-    detailed_stats = [
-        {"player": p.name, "number": p.jersey_number, "team": p.team_name,
-         "goals": p.goals or 0, "assists": p.assists or 0, 
-         "yellow": p.yellow_cards or 0, "red": p.red_cards or 0, "own_goals": 0} 
-        for p in players_stats
-    ]
+    detailed_stats = [{"player": p.name, "number": p.jersey_number, "team": p.team_name, "goals": p.goals or 0, "assists": p.assists or 0, "yellow": p.yellow_cards or 0, "red": p.red_cards or 0, "own_goals": 0} for p in players_stats]
     
-    return {
-        "detailed_stats": detailed_stats,
-        "top_scorers": sorted(detailed_stats, key=lambda x: x['goals'], reverse=True)[:5],
-        "top_assists": sorted(detailed_stats, key=lambda x: x['assists'], reverse=True)[:5],
-        "most_disciplined": sorted(detailed_stats, key=lambda x: x['yellow'] + (x['red']*3))[:5]
-    }
+    return {"detailed_stats": detailed_stats, "top_scorers": sorted(detailed_stats, key=lambda x: x['goals'], reverse=True)[:5], "top_assists": sorted(detailed_stats, key=lambda x: x['assists'], reverse=True)[:5], "most_disciplined": sorted(detailed_stats, key=lambda x: x['yellow'] + (x['red']*3))[:5]}
