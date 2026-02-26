@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from typing import List, Optional
 import random, os, shutil
 from datetime import datetime, timedelta, date
@@ -25,35 +25,61 @@ def check_role(user: User, allowed_roles: List[str]):
     if user.role not in allowed_roles and user.role != "super_admin":
         raise HTTPException(status_code=403, detail="ليس لديك الصلاحيات الكافية")
 
+# ==========================================
+# دالة مساعدة: إنشاء المستخدمين وإرسال الإيميل (ذكية)
+# ==========================================
 def create_user_and_send_invite(db: Session, name: str, email: str, role: str, team_id: Optional[int] = None, player_id: Optional[int] = None):
     user = db.query(User).filter(User.email == email).first()
+    
     if not user:
+        # --- حالة 1: مستخدم جديد (إنشاء + إرسال إيميل) ---
         temp_pass = "TempPass123!"
         user = User(name=name, email=email, hashed_password=get_password_hash(temp_pass), role=role, is_active=True)
         db.add(user)
         db.commit()
         db.refresh(user)
-    
-    if role == "coach" and team_id:
-        coach = db.query(Coach).filter(Coach.email == email).first()
-        if not coach:
+        
+        # ربط السجلات المساعدة
+        if role == "coach" and team_id:
             coach = Coach(name=name, email=email, team_id=team_id, user_id=user.id)
             db.add(coach)
             db.commit()
-    elif role == "referee":
-        ref = db.query(Referee).filter(Referee.email == email).first()
-        if not ref:
+        elif role == "player" and player_id:
+            player = db.query(Player).filter(Player.id == player_id).first()
+            if player:
+                player.user_id = user.id
+                db.commit()
+        elif role == "referee":
             ref = Referee(name=name, email=email, user_id=user.id)
             db.add(ref)
             db.commit()
-    elif role == "player" and player_id:
-        player = db.query(Player).filter(Player.id == player_id).first()
-        if player:
-            player.user_id = user.id
-            db.commit()
+
+        # إرسال الإيميل
+        reset_token = create_access_token(data={"sub": user.email, "type": "reset", "role": role}, expires_delta=timedelta(days=3))
+        print(f"\n📧 [NEW USER] Sending invite to: {email}")
+        try:
+            asyncio.run(send_reset_email(email, reset_token))
+            print(f"✅ Email sent successfully to {email}")
+        except Exception as e:
+            print(f"❌ Email sending failed: {e}")
+        
+        return {
+            "user_id": user.id, 
+            "temp_password": temp_pass, 
+            "is_new": True,
+            "message": "تم إنشاء المستخدم وإرسال الإيميل."
+        }
     
-    reset_token = create_access_token(data={"sub": user.email, "type": "reset", "role": role}, expires_delta=timedelta(days=3))
-    return user.id
+    else:
+        # --- حالة 2: مستخدم موجود (لا إنشاء ولا إرسال) ---
+        print(f"\n⚠️ [EXISTING USER] Email '{email}' already exists (ID: {user.id}). Skipping creation.")
+        
+        return {
+            "user_id": user.id, 
+            "temp_password": None, 
+            "is_new": False,
+            "message": f"تحذير: الإيميل '{email}' مستخدم مسبقاً."
+        }
 
 def save_uploaded_file(file: UploadFile, folder: str) -> str:
     file_path = os.path.join(UPLOAD_DIR, folder, file.filename)
@@ -63,7 +89,7 @@ def save_uploaded_file(file: UploadFile, folder: str) -> str:
     return f"/{file_path}"
 
 # ==========================================
-# 1. إدارة البطولات (مع توليد ذكي للجولات)
+# 1. إدارة البطولات (Tournaments)
 # ==========================================
 
 @router.post("/tournaments", response_model=dict)
@@ -101,7 +127,7 @@ def delete_tournament(t_id: int, db: Session = Depends(get_db), current_user: Us
     check_role(current_user, ["super_admin"])
     tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
     if not tournament: raise HTTPException(404, "غير موجودة")
-    db.query(Match).filter(Match.tournament_id == t_id).delete()
+    db.query(Match).filter(Match.tournament_id == t_id).delete(synchronize_session=False)
     tournament.teams = []
     db.delete(tournament)
     db.commit()
@@ -136,14 +162,13 @@ def generate_matches(t_id: int, db: Session = Depends(get_db), current_user: Use
     teams = tournament.teams
     if len(teams) < 2: raise HTTPException(400, "فريقان على الأقل")
     
-    db.query(Match).filter(Match.tournament_id == t_id).delete()
+    db.query(Match).filter(Match.tournament_id == t_id).delete(synchronize_session=False)
     
     start_date = tournament.start_date
     end_date = tournament.end_date
-    total_days = (end_date - start_date).days
+    total_days = max((end_date - start_date).days, 1)
     
     if tournament.type == "league":
-        # خوارزمية Round-Robin
         num_teams = len(teams)
         if num_teams % 2 != 0:
             teams.append(None)
@@ -159,7 +184,6 @@ def generate_matches(t_id: int, db: Session = Depends(get_db), current_user: Use
                 away = current_teams[num_teams - 1 - i]
                 
                 if home and away:
-                    # توزيع التواريخ عشوائياً ضمن نطاق الجولة
                     days_per_round = total_days // num_rounds
                     offset = (round_idx * days_per_round) + random.randint(0, max(1, days_per_round - 1))
                     match_date = start_date + timedelta(days=min(offset, total_days))
@@ -173,14 +197,12 @@ def generate_matches(t_id: int, db: Session = Depends(get_db), current_user: Use
                         round_number=round_idx + 1
                     ))
             
-            # تدوير الفرق
             current_teams.insert(1, current_teams.pop())
             
         db.commit()
         return {"message": f"تم توليد جدول الدوري ({num_rounds} جولة)"}
 
     elif tournament.type == "knockout":
-        # التحقق من قوة العدد لـ 2
         if len(teams) & (len(teams) - 1) != 0:
              raise HTTPException(400, "في خروج المغلوب، يجب أن يكون عدد الفرق قوة لـ 2 (2, 4, 8, 16...).")
         
@@ -208,7 +230,7 @@ def generate_matches(t_id: int, db: Session = Depends(get_db), current_user: Use
             round_num += 1
             
         db.commit()
-        return {"message": "تم توليد هيكل خروج المغلوب. استخدم زر 'التالي' بعد إدخال النتائج."}
+        return {"message": "تم توليد هيكل خروج المغلوب."}
     
     return {"message": "تم التوليد"}
 
@@ -224,19 +246,17 @@ def advance_knockout_round(t_id: int, db: Session = Depends(get_db), current_use
     
     max_round = max(m.round_number for m in all_matches)
     
-    # البحث عن أول دور مكتمل ولم يتم نقل فائزيه
     found_round = None
     for r in range(1, max_round):
         round_matches = [m for m in all_matches if m.round_number == r]
         if round_matches and all(m.status == 'finished' for m in round_matches):
             next_round_matches = [m for m in all_matches if m.round_number == r + 1]
-            # إذا كانت مباريات الدور التالي لا تزال فارغة (home_team_id is None)
             if next_round_matches and any(m.home_team_id is None for m in next_round_matches):
                 found_round = r
                 break
     
     if not found_round:
-        raise HTTPException(400, "لا يوجد دور مكتمل جاهز للانتقال، أو تم الانتقال بالفعل.")
+        raise HTTPException(400, "لا يوجد دور مكتمل جاهز للانتقال.")
     
     target_round = found_round + 1
     completed_matches = sorted([m for m in all_matches if m.round_number == found_round], key=lambda x: x.id)
@@ -247,19 +267,15 @@ def advance_knockout_round(t_id: int, db: Session = Depends(get_db), current_use
         if winner_idx >= len(target_matches): break
         
         m1 = completed_matches[i]
-        # تحديد الفائز 1
-        if m1.score_home > m1.score_away: w1 = m1.home_team_id
-        elif m1.score_away > m1.score_home: w1 = m1.away_team_id
-        else: raise HTTPException(400, f"المباراة {m1.id} تعادل! يجب تحديد فائز.")
+        w1 = m1.home_team_id if m1.score_home > m1.score_away else m1.away_team_id
+        if m1.score_home == m1.score_away: raise HTTPException(400, f"المباراة {m1.id} تعادل!")
         
         w2 = None
         if i+1 < len(completed_matches):
             m2 = completed_matches[i+1]
-            if m2.score_home > m2.score_away: w2 = m2.home_team_id
-            elif m2.score_away > m2.score_home: w2 = m2.away_team_id
-            else: raise HTTPException(400, f"المباراة {m2.id} تعادل!")
+            w2 = m2.home_team_id if m2.score_home > m2.score_away else m2.away_team_id
+            if m2.score_home == m2.score_away: raise HTTPException(400, f"المباراة {m2.id} تعادل!")
         
-        # تحديث مباراة الدور التالي
         t_match = target_matches[winner_idx]
         t_match.home_team_id = w1
         t_match.away_team_id = w2
@@ -271,6 +287,81 @@ def advance_knockout_round(t_id: int, db: Session = Depends(get_db), current_use
     
     db.commit()
     return {"message": f"تم نقل الفائزين من الدور {found_round} إلى الدور {target_round}!"}
+
+@router.get("/tournaments/{t_id}/standings", response_model=List[dict])
+def get_tournament_standings(t_id: int, db: Session = Depends(get_db)):
+    tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
+    if not tournament or tournament.type != "league":
+        return []
+    
+    standings = {}
+    for team in tournament.teams:
+        standings[team.id] = {
+            "id": team.id, "name": team.name, "logo": team.logo,
+            "played": 0, "won": 0, "drawn": 0, "lost": 0,
+            "gf": 0, "ga": 0, "gd": 0, "points": 0
+        }
+    
+    matches = db.query(Match).filter(Match.tournament_id == t_id, Match.status == "finished").all()
+    
+    for m in matches:
+        if m.home_team_id not in standings or m.away_team_id not in standings: continue
+        home = standings[m.home_team_id]
+        away = standings[m.away_team_id]
+        
+        home["played"] += 1; away["played"] += 1
+        home["gf"] += m.score_home; home["ga"] += m.score_away
+        away["gf"] += m.score_away; away["ga"] += m.score_home
+        
+        if m.score_home > m.score_away:
+            home["won"] += 1; home["points"] += 3
+            away["lost"] += 1
+        elif m.score_home < m.score_away:
+            away["won"] += 1; away["points"] += 3
+            home["lost"] += 1
+        else:
+            home["drawn"] += 1; home["points"] += 1
+            away["drawn"] += 1; away["points"] += 1
+            
+        home["gd"] = home["gf"] - home["ga"]
+        away["gd"] = away["gf"] - away["ga"]
+    
+    return sorted(standings.values(), key=lambda x: (x["points"], x["gd"], x["gf"]), reverse=True)
+
+@router.post("/tournaments/{t_id}/next-round", response_model=dict)
+def next_round_action(t_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    check_role(current_user, ["super_admin"])
+    tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
+    if not tournament: raise HTTPException(404, "غير موجودة")
+    
+    if tournament.type == "league":
+        all_matches = db.query(Match).filter(Match.tournament_id == t_id).all()
+        if not all_matches: raise HTTPException(400, "لا توجد مباريات")
+        
+        max_round = max(m.round_number for m in all_matches)
+        current_round_num = None
+        
+        for r in range(1, max_round + 1):
+            round_matches = [m for m in all_matches if m.round_number == r]
+            if any(m.status != "finished" for m in round_matches):
+                current_round_num = r
+                break
+        
+        if current_round_num is None:
+            return {"message": "✅ انتهت جميع جولات البطولة!"}
+        
+        round_matches = [m for m in all_matches if m.round_number == current_round_num]
+        unfinished = [m for m in round_matches if m.status != "finished"]
+        
+        if unfinished:
+            raise HTTPException(400, f"لا تزال هناك {len(unfinished)} مباراة لم تنتهِ في الجولة {current_round_num}.")
+        
+        return {"message": f"✅ الجولة {current_round_num} مكتملة."}
+
+    elif tournament.type == "knockout":
+        return advance_knockout_round(t_id, db, current_user)
+    
+    return {"message": "تم"}
 
 @router.post("/matches/update-details", response_model=dict)
 def update_match_details(match_id: int, details: MatchUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -292,26 +383,93 @@ def update_match_details(match_id: int, details: MatchUpdate, db: Session = Depe
     return {"message": "تم التحديث"}
 
 # ==========================================
-# 2. إدارة الفرق (مع الحذف الذكي)
+# 2. إدارة الفرق (Teams) - مع الحذف الذكي والإيميل المشروط
 # ==========================================
 
 @router.post("/teams", response_model=dict)
 def create_team(
-    name: str = Form(...), short_name: str = Form(None), founded_date: str = Form(None), colors: str = Form(None),
-    manager_name: str = Form(...), manager_email: str = Form(...),
-    coach_name: str = Form(...), coach_email: str = Form(...),
+    name: str = Form(...), 
+    short_name: str = Form(None), 
+    founded_date: str = Form(None), 
+    colors: str = Form(None), 
+    manager_name: str = Form(...), 
+    manager_email: str = Form(...),
+    coach_name: str = Form(...), 
+    coach_email: str = Form(...),
     logo: UploadFile = File(None),
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user)
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
 ):
     check_role(current_user, ["super_admin"])
-    logo_path = None
-    if logo: logo_path = save_uploaded_file(logo, "teams")
     
-    manager_id = create_user_and_send_invite(db, manager_name, manager_email, "team_manager")
-    new_team = Team(name=name, short_name=short_name, founded_date=founded_date, colors=colors, logo=logo_path, manager_id=manager_id)
-    db.add(new_team); db.commit(); db.refresh(new_team)
-    create_user_and_send_invite(db, coach_name, coach_email, "coach", team_id=new_team.id)
-    return {"message": "تم إنشاء الفريق", "team_id": new_team.id}
+    # معالجة الشعار
+    logo_path = None
+    if logo and logo.filename:
+        logo_path = save_uploaded_file(logo, "teams")
+    
+    # معالجة التاريخ (تحويل صحيح لتجنب خطأ dict)
+    parsed_founded_date = None
+    if founded_date and founded_date.strip():
+        try:
+            parsed_founded_date = datetime.strptime(founded_date, "%Y-%m-%d").date()
+        except ValueError:
+            parsed_founded_date = None
+
+    # 1. التعامل مع المسؤول
+    manager_result = create_user_and_send_invite(db, manager_name, manager_email, "team_manager")
+    manager_id = manager_result.get("user_id")
+    
+    if not manager_id:
+        raise HTTPException(status_code=500, detail="فشل التعامل مع حساب المسؤول")
+
+    # 2. إنشاء الفريق
+    try:
+        new_team = Team(
+            name=name, 
+            short_name=short_name, 
+            founded_date=parsed_founded_date, 
+            colors=colors, 
+            logo=logo_path, 
+            manager_id=manager_id
+        )
+        db.add(new_team)
+        db.commit()
+        db.refresh(new_team)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"حدث خطأ أثناء إنشاء الفريق: {str(e)}")
+    
+    # 3. التعامل مع المدرب (منطق ذكي)
+    coach_result = create_user_and_send_invite(db, coach_name, coach_email, "coach", team_id=None)
+    coach_user_id = coach_result.get("user_id")
+    
+    warnings = []
+    if not coach_result.get("is_new"): warnings.append(coach_result.get("message"))
+    if not manager_result.get("is_new"): warnings.append(manager_result.get("message"))
+
+    existing_coach = db.query(Coach).filter(Coach.user_id == coach_user_id).first()
+    if existing_coach:
+        existing_coach.team_id = new_team.id
+        existing_coach.name = coach_name
+        db.commit()
+    else:
+        new_coach = Coach(name=coach_name, email=coach_email, team_id=new_team.id, user_id=coach_user_id)
+        db.add(new_coach)
+        db.commit()
+
+    response_message = "تم إنشاء الفريق بنجاح."
+    if warnings: response_message += " ملاحظات: " + " | ".join(warnings)
+
+    return {
+        "message": response_message, 
+        "team_id": new_team.id,
+        "details": {
+            "manager_status": "جديد (تم إرسال الإيميل)" if manager_result.get("is_new") else "موجود مسبقاً",
+            "coach_status": "جديد (تم إرسال الإيميل)" if coach_result.get("is_new") else "موجود مسبقاً",
+            "manager_temp_pass": manager_result.get("temp_password"),
+            "coach_temp_pass": coach_result.get("temp_password")
+        }
+    }
 
 @router.get("/teams", response_model=List[dict])
 def get_all_teams(db: Session = Depends(get_db)):
@@ -320,37 +478,58 @@ def get_all_teams(db: Session = Depends(get_db)):
 @router.delete("/teams/{team_id}", response_model=dict)
 def delete_team(team_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     check_role(current_user, ["super_admin"])
+    
     team = db.query(Team).filter(Team.id == team_id).first()
-    if not team: raise HTTPException(404, "غير موجود")
+    if not team:
+        raise HTTPException(status_code=404, detail="الفريق غير موجود")
     
     try:
+        # جمع المعرفات
         players = db.query(Player).filter(Player.team_id == team_id).all()
         player_ids = [p.id for p in players]
-        player_user_ids = [p.user_id for p in players if p.user_id]
+        user_ids_to_delete = [p.user_id for p in players if p.user_id]
         
         coach = db.query(Coach).filter(Coach.team_id == team_id).first()
-        coach_user_id = coach.user_id if coach else None
-        manager_user_id = team.manager_id
+        coach_id = coach.id if coach else None
+        if coach and coach.user_id:
+            user_ids_to_delete.append(coach.user_id)
+        if team.manager_id:
+            user_ids_to_delete.append(team.manager_id)
         
+        unique_user_ids = list(set([uid for uid in user_ids_to_delete if uid]))
+
+        # الحذف بالترتيب الآمن
         if player_ids:
             db.query(PlayerStat).filter(PlayerStat.player_id.in_(player_ids)).delete(synchronize_session=False)
-            for p in players: db.delete(p)
         
-        if coach: db.delete(coach)
-        team.tournaments = []
+        if player_ids:
+            db.query(Player).filter(Player.id.in_(player_ids)).update({"user_id": None}, synchronize_session=False)
+            db.query(Player).filter(Player.id.in_(player_ids)).delete(synchronize_session=False)
+
+        if unique_user_ids:
+            db.query(Coach).filter(Coach.user_id.in_(unique_user_ids)).update({"user_id": None}, synchronize_session=False)
         
+        if coach_id:
+            db.query(Coach).filter(Coach.id == coach_id).delete(synchronize_session=False)
+
+        if unique_user_ids:
+            db.query(Team).filter(Team.manager_id.in_(unique_user_ids)).update({"manager_id": None}, synchronize_session=False)
+
+        db.flush()
+        db.execute(tournament_teams.delete().where(tournament_teams.c.team_id == team_id))
         db.delete(team)
-        db.flush() # حاسم جداً
-        
-        users_to_delete = [uid for uid in [manager_user_id, coach_user_id] if uid] + player_user_ids
-        if users_to_delete:
-            db.query(User).filter(User.id.in_(users_to_delete)).delete(synchronize_session=False)
+        db.flush()
+
+        if unique_user_ids:
+            db.query(User).filter(User.id.in_(unique_user_ids)).delete(synchronize_session=False)
         
         db.commit()
-        return {"message": "تم الحذف بنجاح"}
+        return {"message": "تم حذف الفريق وجميع البيانات المرتبطة به بنجاح."}
+        
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Critical Error deleting team {team_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"حدث خطأ أثناء الحذف: {str(e)}")
 
 # ==========================================
 # 3. بيانات المستخدم والإحصائيات
@@ -394,7 +573,7 @@ def create_player(
     if photo: photo_path = save_uploaded_file(photo, "players")
     
     user_id = None
-    if email: user_id = create_user_and_send_invite(db, name, email, "player", player_id=None)
+    if email: user_id = create_user_and_send_invite(db, name, email, "player", player_id=None)["user_id"]
     
     new_player = Player(name=name, position=position, jersey_number=jersey_number, team_id=team_id, user_id=user_id, photo=photo_path)
     db.add(new_player); db.commit(); db.refresh(new_player)
@@ -420,7 +599,6 @@ def get_advanced_statistics(t_id: int, db: Session = Depends(get_db)):
     tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
     if not tournament: raise HTTPException(404, "غير موجودة")
     
-    # تبسيط للاستعلام (يمكن توسيعه ليشمل own_goals إذا أضفت العمود)
     players_stats = db.query(
         Player.name, Player.jersey_number, Team.name.label("team_name"), 
         func.sum(PlayerStat.goals).label("goals"),
@@ -444,113 +622,3 @@ def get_advanced_statistics(t_id: int, db: Session = Depends(get_db)):
         "top_assists": sorted(detailed_stats, key=lambda x: x['assists'], reverse=True)[:5],
         "most_disciplined": sorted(detailed_stats, key=lambda x: x['yellow'] + (x['red']*3))[:5]
     }
-# ... (نفس الاستيرادات والدوال السابقة)
-
-@router.get("/tournaments/{t_id}/standings", response_model=List[dict])
-def get_tournament_standings(t_id: int, db: Session = Depends(get_db)):
-    """حساب جدول الترتيب بدقة متناهية"""
-    tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
-    if not tournament or tournament.type != "league":
-        return []
-    
-    # تهيئة إحصائيات كل فريق
-    standings = {}
-    for team in tournament.teams:
-        standings[team.id] = {
-            "id": team.id, "name": team.name, "logo": team.logo,
-            "played": 0, "won": 0, "drawn": 0, "lost": 0,
-            "gf": 0, "ga": 0, "gd": 0, "points": 0
-        }
-    
-    # جلب المباريات المنتهية فقط
-    matches = db.query(Match).filter(
-        Match.tournament_id == t_id, 
-        Match.status == "finished"
-    ).all()
-    
-    for m in matches:
-        if m.home_team_id not in standings or m.away_team_id not in standings:
-            continue
-            
-        home = standings[m.home_team_id]
-        away = standings[m.away_team_id]
-        
-        home["played"] += 1
-        away["played"] += 1
-        home["gf"] += m.score_home
-        home["ga"] += m.score_away
-        away["gf"] += m.score_away
-        away["ga"] += m.score_home
-        
-        if m.score_home > m.score_away:
-            home["won"] += 1
-            home["points"] += 3
-            away["lost"] += 1
-        elif m.score_home < m.score_away:
-            away["won"] += 1
-            away["points"] += 3
-            home["lost"] += 1
-        else:
-            home["drawn"] += 1
-            home["points"] += 1
-            away["drawn"] += 1
-            away["points"] += 1
-            
-        home["gd"] = home["gf"] - home["ga"]
-        away["gd"] = away["gf"] - away["ga"]
-    
-    # تحويل القاموس لقائمة وترتيبها (النقاط -> فارق الأهداف -> الأهداف المسجلة)
-    sorted_standings = sorted(
-        standings.values(),
-        key=lambda x: (x["points"], x["gd"], x["gf"]),
-        reverse=True
-    )
-    
-    return sorted_standings
-
-@router.post("/tournaments/{t_id}/next-round", response_model=dict)
-def next_round_action(t_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """لل دوري: يتحقق من انتهاء الجولة الحالية ويفتح التالية. للخروج المغلوب: ينقل الفائزين."""
-    check_role(current_user, ["super_admin"])
-    tournament = db.query(Tournament).filter(Tournament.id == t_id).first()
-    if not tournament: raise HTTPException(404, "غير موجودة")
-    
-    if tournament.type == "league":
-        # جلب جميع الجولات الموجودة
-        all_matches = db.query(Match).filter(Match.tournament_id == t_id).all()
-        if not all_matches: raise HTTPException(400, "لا توجد مباريات")
-        
-        max_round = max(m.round_number for m in all_matches)
-        
-        # إيجاد أول جولة غير مكتملة
-        current_round_num = None
-        for r in range(1, max_round + 1):
-            round_matches = [m for m in all_matches if m.round_number == r]
-            if any(m.status != "finished" for m in round_matches):
-                current_round_num = r
-                break
-        
-        if current_round_num is None:
-            return {"message": "✅ انتهت جميع جولات البطولة! انظر جدول الترتيب النهائي."}
-        
-        # التحقق مما إذا كانت الجولة الحالية قد اكتملت بالفعل (ربما ضغط المستخدم بالخطأ)
-        round_matches = [m for m in all_matches if m.round_number == current_round_num]
-        if all(m.status == "finished" for m in round_matches):
-            # الجولة الحالية مكتملة، ننتقل للتالية منطقياً (فقط رسالة تأكيد)
-            next_r = current_round_num + 1
-            if next_r > max_round:
-                 return {"message": "✅ انتهت البطولة!"}
-            return {"message": f"✅ الجولة {current_round_num} مكتملة. يمكنك عرض الجولة {next_r}."}
-        else:
-            # هناك مباريات لم تلعب بعد في الجولة الحالية
-            unfinished = len([m for m in round_matches if m.status != "finished"])
-            raise HTTPException(400, f"لا تزال هناك {unfinished} مباراة لم تنتهِ في الجولة {current_round_num}. أكمل المباريات أولاً.")
-
-    elif tournament.type == "knockout":
-        # استدعاء دالة الانتقال السابقة (يجب نسخ كود advance_knockout_round هنا أو استدعاؤه)
-        # للتبسيط، سأفترض أنك أضفت دالة advance_knockout_round من الرسالة السابقة
-        return advance_knockout_round(t_id, db, current_user)
-    
-    return {"message": "تم"}
-
-# ... (بقية الدوال كما هي)
