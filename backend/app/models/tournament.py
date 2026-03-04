@@ -69,6 +69,7 @@ class Coach(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
+    photo = Column(String(500), nullable=True)       # ✅ صورة المدرب
     team_id = Column(Integer, ForeignKey("teams.id"))
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=True)
 
@@ -81,6 +82,7 @@ class Referee(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
+    photo = Column(String(500), nullable=True)       # ✅ صورة الحكم
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=True)
 
     user = relationship("User", backref="referee_profile", uselist=False)
@@ -109,10 +111,12 @@ class Match(Base):
     score_home = Column(Integer, default=0)
     score_away = Column(Integer, default=0)
     status = Column(String(50), default="scheduled")  # scheduled, lineup_submitted, live, finished
-    # ✅ FIX: String بدل Integer باش يقبل "KO_R1", "KO_R2", "1", "2"...
     round_number = Column(String(20), nullable=True)
     group_name = Column(String(10), nullable=True)
     leg_number = Column(Integer, default=1, nullable=True)
+    penalty_home = Column(Integer, nullable=True)     # ✅ ركلات الترجيح
+    penalty_away = Column(Integer, nullable=True)     # ✅ ركلات الترجيح
+    referee_report = Column(String(500), nullable=True)  # ✅ مسار PDF تقرير الحكم
 
     tournament = relationship("Tournament", back_populates="matches")
     home_team = relationship("Team", foreign_keys=[home_team_id], back_populates="home_matches")
@@ -120,7 +124,6 @@ class Match(Base):
     stadium = relationship("Stadium", back_populates="matches")
     referee = relationship("Referee", back_populates="matches")
     player_stats = relationship("PlayerStat", back_populates="match")
-
     lineups = relationship("MatchLineup", back_populates="match", cascade="all, delete-orphan")
     events = relationship("MatchEvent", back_populates="match", cascade="all, delete-orphan")
 
