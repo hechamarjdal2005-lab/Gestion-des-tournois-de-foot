@@ -1,109 +1,169 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuthStore } from '../store/authStore';
 
-/* ═══════════════════════════════════════════════════
-   توزيع اللاعبين حسب المركز
-═══════════════════════════════════════════════════ */
 const groupByLine = (players) => {
-  const grouped = { GK: [], DEF: [], MID: [], FWD: [] };
-  players.forEach((p) => {
+  const g = { GK: [], DEF: [], MID: [], FWD: [] };
+  players.forEach(p => {
     const pos = (p.position || '').toLowerCase();
-    if (pos.includes('goal') || pos === 'gk') grouped.GK.push(p);
-    else if (pos.includes('defend') || pos.includes('back') || pos === 'cb' || pos === 'lb' || pos === 'rb') grouped.DEF.push(p);
-    else if (pos.includes('mid') || pos === 'cm' || pos === 'dm' || pos === 'am') grouped.MID.push(p);
-    else grouped.FWD.push(p);
+    if (pos.includes('goal') || pos === 'gk') g.GK.push(p);
+    else if (pos.includes('defend') || pos.includes('back') || ['cb','lb','rb','rwb','lwb'].includes(pos)) g.DEF.push(p);
+    else if (pos.includes('mid') || ['cm','dm','am','cdm','cam'].includes(pos)) g.MID.push(p);
+    else g.FWD.push(p);
   });
-  return ['GK', 'DEF', 'MID', 'FWD'].filter((k) => grouped[k].length > 0).map((k) => grouped[k]);
+  return ['GK','DEF','MID','FWD'].filter(k => g[k].length > 0).map(k => g[k]);
 };
 
-/* ═══════════════════════════════════════════════════
-   بطاقة اللاعب السداسية
-═══════════════════════════════════════════════════ */
-const HexPlayerCard = ({ player, teamId, onDrop, tool, side }) => {
-  const accent = side === 'blue' ? '#3b82f6' : '#ef4444';
-  
-  // ✅ إصلاح رابط الصورة (إزالة المسافات الزائدة)
-  const imgSrc = player.photo
-    ? `http://127.0.0.1:8000${player.photo}`
-    : `https://ui-avatars.com/api/?name=${encodeURIComponent(player.name)}&background=0f2419&color=fff&size=128`;
+const countGoals = (events, homeId, awayId) => {
+  let h = 0, a = 0;
+  events.forEach(e => {
+    if (e.type === 'goal') { if (e.team_id === homeId) h++; else if (e.team_id === awayId) a++; }
+    else if (e.type === 'own_goal') { if (e.team_id === homeId) a++; else if (e.team_id === awayId) h++; }
+  });
+  return { h, a };
+};
 
+const countAssists = (events) => events.filter(e => e.type === 'assist').length;
+const getYellowCount = (events, playerId) =>
+  events.filter(e => e.player_id === playerId && e.type === 'yellow_card').length;
+
+const EVENT_META = {
+  goal:        { icon: '⚽', label: 'Goal',       color: '#22c55e' },
+  assist:      { icon: '🎯', label: 'Assist',      color: '#3b82f6' },
+  own_goal:    { icon: '💀', label: 'Own Goal',    color: '#f97316' },
+  yellow_card: { icon: '🟨', label: 'Yellow Card', color: '#facc15' },
+  red_card:    { icon: '🟥', label: 'Red Card',    color: '#ef4444' },
+};
+
+/* ── Minute Modal ── */
+const MinuteModal = ({ tool, player, matchMinute, onConfirm, onCancel }) => {
+  const [min, setMin] = useState(matchMinute);
+  const meta = EVENT_META[tool?.type] || {};
   return (
-    <div
-      className="flex flex-col items-center gap-1 group cursor-pointer select-none"
-      style={{ minWidth: 70 }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => { e.preventDefault(); if (tool) onDrop(player, teamId); }}
-      onClick={() => { if (tool) onDrop(player, teamId); }}
-    >
-      <div className="relative transition-transform duration-300 group-hover:scale-110" style={{ width: 60, height: 68 }}>
-        <svg viewBox="0 0 60 68" className="absolute inset-0 w-full h-full drop-shadow-lg">
-          <defs>
-            <clipPath id={`hx-${player.id}`}>
-              <polygon points="30,1 59,17 59,51 30,67 1,51 1,17" />
-            </clipPath>
-            <linearGradient id={`ov-${player.id}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={accent} stopOpacity="0.15" />
-              <stop offset="100%" stopColor="#000" stopOpacity="0.45" />
-            </linearGradient>
-          </defs>
-          <polygon points="30,1 59,17 59,51 30,67 1,51 1,17" fill="#0d1f14" stroke={accent} strokeWidth="2" />
-          <image href={imgSrc} x="0" y="0" width="60" height="68" clipPath={`url(#hx-${player.id})`} preserveAspectRatio="xMidYMid slice" />
-          <polygon points="30,1 59,17 59,51 30,67 1,51 1,17" fill={`url(#ov-${player.id})`} />
-          {tool && (
-            <polygon points="30,1 59,17 59,51 30,67 1,51 1,17" fill="none" stroke="#22c55e" strokeWidth="2.5" className="animate-pulse" />
-          )}
-        </svg>
-        <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black border-2 border-gray-900 shadow-lg z-10"
-          style={{ background: accent, color: '#fff' }}>
-          {player.number || '?'}
-        </div>
-        {tool && (
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-20">
-            <span className="bg-green-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shadow-xl animate-bounce -translate-y-2 block">
-              {tool.label}
-            </span>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      style={{ background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(10px)' }}>
+      <div className="rounded-2xl overflow-hidden shadow-2xl w-full max-w-xs border"
+        style={{ background: '#0d1824', borderColor: (meta.color||'#fff') + '35' }}>
+        <div className="px-6 py-4 flex items-center gap-3 border-b" style={{ borderColor: (meta.color||'#fff') + '20' }}>
+          <span className="text-3xl">{meta.icon}</span>
+          <div>
+            <div className="text-white font-black text-base" style={{ fontFamily: 'Barlow Condensed, sans-serif' }}>{meta.label}</div>
+            <div className="text-xs mt-0.5 font-bold" style={{ color: meta.color }}>#{player?.number} {player?.name}</div>
           </div>
-        )}
-      </div>
-      <div className="text-center max-w-[80px]">
-        <div className="text-[10px] font-bold text-white leading-tight truncate drop-shadow-md" style={{ textShadow: '0 1px 4px #000' }}>
-          {player.name}
         </div>
-        <div className="text-[8px] uppercase tracking-wider font-semibold" style={{ color: accent }}>
-          {player.position}
+        <div className="px-6 py-5">
+          <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-3">Match Minute</p>
+          <div className="flex items-center gap-3 mb-6">
+            <button onClick={() => setMin(m => Math.max(1, m-1))}
+              className="w-10 h-10 rounded-xl font-black text-xl text-white flex items-center justify-center hover:opacity-80 transition"
+              style={{ background: (meta.color||'#fff') + '28' }}>−</button>
+            <input type="number" min={1} max={120} value={min}
+              onChange={e => setMin(Math.max(1, parseInt(e.target.value)||1))}
+              className="flex-1 text-center text-4xl font-black bg-transparent border-b-2 focus:outline-none py-1"
+              style={{ color: meta.color, borderColor: (meta.color||'#fff') + '50', fontFamily: 'monospace' }} />
+            <button onClick={() => setMin(m => Math.min(120, m+1))}
+              className="w-10 h-10 rounded-xl font-black text-xl text-white flex items-center justify-center hover:opacity-80 transition"
+              style={{ background: (meta.color||'#fff') + '28' }}>+</button>
+          </div>
+          <div className="flex gap-3">
+            <button onClick={onCancel}
+              className="flex-1 py-2.5 rounded-xl text-sm font-bold text-gray-400 border border-gray-700 hover:bg-gray-800 transition">Cancel</button>
+            <button onClick={() => onConfirm(min)}
+              className="flex-1 py-2.5 rounded-xl text-sm font-black text-black transition hover:opacity-90"
+              style={{ background: meta.color }}>Confirm</button>
+          </div>
         </div>
       </div>
     </div>
   );
 };
 
-/* ═══════════════════════════════════════════════════
-   نصف الملعب
-═══════════════════════════════════════════════════ */
-const PitchHalf = ({ lineup, teamName, teamId, onDrop, tool, side, flip = false }) => {
-  const rows = groupByLine(lineup);
-  const orderedRows = flip ? [...rows].reverse() : rows;
+/* ── Player Token ── */
+const PlayerToken = ({ player, teamId, onDrop, tool, side, events }) => {
+  const accent = side === 'blue' ? '#60a5fa' : '#f87171';
+  const yellows = getYellowCount(events, player.id);
+  const hasRed  = events.some(e => e.player_id === player.id && e.type === 'red_card');
+  const imgSrc  = player.photo
+    ? `http://127.0.0.1:8000${player.photo}`
+    : `https://ui-avatars.com/api/?name=${encodeURIComponent(player.name)}&background=112211&color=fff&size=120&bold=true`;
 
   return (
-    <div className={`relative flex-1 flex flex-col overflow-hidden`}
-      style={{
-        background: 'linear-gradient(180deg, #166534 0%, #14532d 50%, #166534 100%)',
-        borderRight: side === 'blue' ? '2px solid rgba(255,255,255,0.15)' : 'none',
-      }}>
-      <PitchLines flip={flip} />
-      <div className={`absolute ${flip ? 'bottom-3' : 'top-3'} left-0 right-0 flex justify-center z-20 pointer-events-none`}>
-        <span className="text-xs font-black px-4 py-1 rounded-full backdrop-blur-sm border shadow-xl"
-          style={{ color: side === 'blue' ? '#93c5fd' : '#fca5a5', borderColor: side === 'blue' ? 'rgba(59,130,246,0.4)' : 'rgba(239,68,68,0.4)', background: 'rgba(0,0,0,0.55)' }}>
-          {teamName}
-        </span>
+    <div className="flex flex-col items-center gap-1 group select-none"
+      style={{ width: 70, cursor: tool ? 'pointer' : 'default' }}
+      onClick={() => tool && onDrop(player, teamId)}>
+      <div className="relative">
+        <div className="rounded-full overflow-hidden border-2 transition-all duration-200 group-hover:scale-110"
+          style={{
+            width: 54, height: 54,
+            borderColor: hasRed ? '#ef4444' : yellows >= 1 ? '#facc15' : accent,
+            boxShadow: tool ? `0 0 16px ${accent}70` : `0 2px 8px rgba(0,0,0,0.5)`,
+          }}>
+          <img src={imgSrc} alt={player.name} className="w-full h-full object-cover" />
+        </div>
+        <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-black border border-gray-900 shadow"
+          style={{ background: accent, color: '#000' }}>{player.number || '?'}</div>
+        {yellows > 0 && !hasRed && (
+          <div className="absolute -top-1 -left-1 flex gap-0.5">
+            {Array.from({length: yellows}).map((_,i) => (
+              <div key={i} className="w-2 h-3 rounded-sm" style={{ background: '#facc15' }} />
+            ))}
+          </div>
+        )}
+        {hasRed && <div className="absolute -top-1 -left-1 w-2 h-3 rounded-sm" style={{ background: '#ef4444' }} />}
+        {tool && (
+          <div className="absolute inset-0 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+            style={{ background: 'rgba(0,0,0,0.6)' }}>
+            <span className="text-lg">{EVENT_META[tool.type]?.icon}</span>
+          </div>
+        )}
       </div>
-      <div className={`relative z-10 flex flex-col ${flip ? 'justify-end' : 'justify-start'} gap-0 h-full py-10 px-1`}>
-        {orderedRows.map((row, ri) => (
-          <div key={ri} className="flex-1 flex items-center justify-around px-2">
-            {row.map((player) => (
-              <HexPlayerCard key={player.id} player={player} teamId={teamId} onDrop={onDrop} tool={tool} side={side} />
+      <div className="text-[9px] font-bold text-white text-center truncate w-full leading-tight"
+        style={{ textShadow: '0 1px 6px rgba(0,0,0,1)' }}>
+        {player.name?.split(' ').slice(-1)[0]}
+      </div>
+    </div>
+  );
+};
+
+/* ── Pitch Half ── */
+const PitchHalf = ({ lineup, teamName, teamId, onDrop, tool, side, flip, events }) => {
+  const rows = groupByLine(lineup);
+  const ordered = flip ? [...rows].reverse() : rows;
+  return (
+    <div className="relative flex-1 flex flex-col overflow-hidden"
+      style={{
+        background: flip
+          ? 'linear-gradient(180deg,#195e30 0%,#1d7038 100%)'
+          : 'linear-gradient(180deg,#1d7038 0%,#195e30 100%)',
+        borderRight: side === 'blue' ? '1px solid rgba(255,255,255,0.07)' : 'none',
+      }}>
+      {/* pitch lines */}
+      <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{opacity:0.12}}>
+        <rect x="8" y="6" width="calc(100% - 16px)" height="calc(100% - 12px)" rx="2" fill="none" stroke="white" strokeWidth="1.2"/>
+        {!flip
+          ? <><rect x="calc(50% - 80px)" y="calc(100% - 72px)" width="160" height="66" fill="none" stroke="white" strokeWidth="1"/>
+               <rect x="calc(50% - 36px)" y="calc(100% - 36px)" width="72" height="30" fill="none" stroke="white" strokeWidth="1"/>
+               <circle cx="50%" cy="calc(100% - 90px)" r="4" fill="white"/></>
+          : <><rect x="calc(50% - 80px)" y="6" width="160" height="66" fill="none" stroke="white" strokeWidth="1"/>
+               <rect x="calc(50% - 36px)" y="6" width="72" height="30" fill="none" stroke="white" strokeWidth="1"/>
+               <circle cx="50%" cy="90" r="4" fill="white"/></>
+        }
+      </svg>
+      <div className={`absolute ${flip?'bottom-2':'top-2'} left-0 right-0 flex justify-center z-10 pointer-events-none`}>
+        <span className="px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border backdrop-blur-sm"
+          style={{
+            color: side==='blue'?'#93c5fd':'#fca5a5',
+            borderColor: side==='blue'?'rgba(96,165,250,0.3)':'rgba(248,113,113,0.3)',
+            background: 'rgba(0,0,0,0.65)',
+          }}>{teamName}</span>
+      </div>
+      <div className={`relative z-10 flex flex-col ${flip?'justify-end':'justify-start'} h-full py-8 px-2`}>
+        {ordered.map((row,ri) => (
+          <div key={ri} className="flex-1 flex items-center justify-around px-3">
+            {row.map(player => (
+              <PlayerToken key={player.id} player={player} teamId={teamId}
+                onDrop={onDrop} tool={tool} side={side} events={events} />
             ))}
           </div>
         ))}
@@ -112,60 +172,79 @@ const PitchHalf = ({ lineup, teamName, teamId, onDrop, tool, side, flip = false 
   );
 };
 
-const PitchLines = ({ flip }) => (
-  <div className="absolute inset-0 pointer-events-none overflow-hidden" style={{ opacity: 0.18 }}>
-    <div className="absolute inset-2 border border-white rounded" />
-    {!flip ? (
-      <>
-        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-3/5 h-24 border border-white border-b-0" />
-        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1/3 h-12 border border-white border-b-0" />
-        <div className="absolute bottom-12 left-1/2 w-10 h-10 -translate-x-1/2 -translate-y-1/2 border border-white rounded-full" />
-      </>
-    ) : (
-      <>
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/5 h-24 border border-white border-t-0" />
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1/3 h-12 border border-white border-t-0" />
-        <div className="absolute top-12 left-1/2 w-10 h-10 -translate-x-1/2 translate-y-1/2 border border-white rounded-full" />
-      </>
-    )}
-  </div>
-);
+/* ── Event Row ── */
+const EventRow = ({ ev, onDelete }) => {
+  const meta = EVENT_META[ev.type] || { icon:'•', label:ev.type, color:'#6b7280' };
+  return (
+    <div className="group flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/5 transition-all"
+      style={{ borderLeft: `3px solid ${meta.color}35` }}>
+      <span className="text-[10px] font-mono font-black shrink-0" style={{ color:meta.color, minWidth:26 }}>{ev.minute}'</span>
+      <span className="text-sm shrink-0">{meta.icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-bold text-white truncate">#{ev.number} {ev.player}</div>
+        <div className="text-[9px] uppercase tracking-wider font-bold" style={{ color:meta.color }}>{meta.label}</div>
+      </div>
+      <button onClick={() => onDelete(ev.id)}
+        className="shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black opacity-0 group-hover:opacity-100 transition-all hover:bg-red-900/40 text-gray-600 hover:text-red-400">
+        ✕
+      </button>
+    </div>
+  );
+};
 
-/* ═══════════════════════════════════════════════════
-   الكومبوننت الرئيسي
-═══════════════════════════════════════════════════ */
+/* ── Tool Button ── */
+const ToolBtn = ({ tool, active, disabled, onClick }) => {
+  const meta = EVENT_META[tool.type] || {};
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className="flex flex-col items-center gap-1 w-full transition-all duration-150 relative group"
+      title={disabled ? tool.disabledReason : meta.label}>
+      <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-lg border transition-all duration-150"
+        style={{
+          background: active ? meta.color+'28' : 'rgba(255,255,255,0.04)',
+          borderColor: active ? meta.color : 'rgba(255,255,255,0.08)',
+          boxShadow: active ? `0 0 14px ${meta.color}45` : 'none',
+          transform: active ? 'scale(1.1)' : 'scale(1)',
+          opacity: disabled ? 0.3 : 1,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+        }}>
+        {meta.icon}
+      </div>
+      <span className="text-[8px] font-bold uppercase tracking-wider leading-tight text-center"
+        style={{ color: active ? meta.color : '#374151' }}>
+        {meta.label?.split(' ')[0]}
+      </span>
+      {active && <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full animate-ping" style={{ background:meta.color }} />}
+    </button>
+  );
+};
+
+/* ══ MAIN ══ */
 const MatchLiveControl = () => {
-  const { user } = useAuthStore();
-  const navigate = useNavigate();
-  const { id } = useParams();
+  const { user }  = useAuthStore();
+  const navigate  = useNavigate();
+  const { id }    = useParams();
 
   useEffect(() => {
-    if (!user || (user.role !== 'super_admin' && user.role !== 'referee')) navigate('/unauthorized');
-  }, [user, navigate]);
+    if (!user || !['super_admin','referee'].includes(user.role)) navigate('/unauthorized');
+  }, [user]);
+  if (!user || !['super_admin','referee'].includes(user.role)) return null;
 
-  if (!user || (user.role !== 'super_admin' && user.role !== 'referee')) return null;
-
-  const [matchData, setMatchData] = useState(null);
-  const [homeLineup, setHomeLineup] = useState([]);
-  const [awayLineup, setAwayLineup] = useState([]);
-  const [score, setScore] = useState({ home: 0, away: 0 });
-  const [events, setEvents] = useState([]);
-  const [minute, setMinute] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
-  const tools = [
-    { type: 'goal', icon: '⚽', label: 'هدف', color: 'bg-white text-black border-black' },
-    { type: 'own_goal', icon: '🔴', label: 'هدف عكسي', color: 'bg-red-600 text-white border-red-800' },
-    { type: 'yellow_card', icon: '🟨', label: 'صفراء', color: 'bg-yellow-400 text-black border-yellow-600' },
-    { type: 'red_card', icon: '🟥', label: 'حمراء', color: 'bg-red-600 text-white border-red-800' },
-  ];
+  const [matchData, setMatchData]     = useState(null);
+  const [homeLineup, setHomeLineup]   = useState([]);
+  const [awayLineup, setAwayLineup]   = useState([]);
+  const [score, setScore]             = useState({ home:0, away:0 });
+  const [events, setEvents]           = useState([]);
+  const [matchMinute, setMatchMinute] = useState(1);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState(null);
   const [selectedTool, setSelectedTool] = useState(null);
+  const [pendingAction, setPendingAction] = useState(null);
 
   useEffect(() => {
     fetchMatchData();
-    const timer = setInterval(() => setMinute((m) => m + 1), 60000);
-    return () => clearInterval(timer);
+    const t = setInterval(() => setMatchMinute(m => m+1), 60000);
+    return () => clearInterval(t);
   }, [id]);
 
   const fetchMatchData = async () => {
@@ -173,160 +252,236 @@ const MatchLiveControl = () => {
       const res = await api.get(`/matches/${id}/lineups`);
       if (res.data?.match) {
         setMatchData(res.data.match);
-        setScore({ home: res.data.match.score_home || 0, away: res.data.match.score_away || 0 });
-        const sort = (arr) => [...arr].sort((a, b) => {
-          if (a.position === 'Goalkeeper') return -1;
-          if (b.position === 'Goalkeeper') return 1;
-          return a.number - b.number;
+        setScore({ home: res.data.match.score_home||0, away: res.data.match.score_away||0 });
+        const sort = arr => [...arr].sort((a,b)=>{
+          if(a.position==='Goalkeeper') return -1;
+          if(b.position==='Goalkeeper') return 1;
+          return (a.number||0)-(b.number||0);
         });
-        setHomeLineup(sort(res.data.home_lineup || []));
-        setAwayLineup(sort(res.data.away_lineup || []));
-        setEvents(res.data.events || []);
+        setHomeLineup(sort(res.data.home_lineup||[]));
+        setAwayLineup(sort(res.data.away_lineup||[]));
+        setEvents((res.data.events||[]).map(e=>({
+          id:e.id, minute:e.minute, type:e.type,
+          player:e.player, player_id:e.player_id,
+          team_id:e.team_id, number:e.number??'?',
+        })));
       }
+    } catch(err) {
+      setError(`Load failed: ${err.response?.data?.detail||err.message}`);
+    } finally { setLoading(false); }
+  };
+
+  const goalsFromEvents = matchData
+    ? countGoals(events, matchData.home_team_id, matchData.away_team_id)
+    : { h:0, a:0 };
+  const totalGoals   = goalsFromEvents.h + goalsFromEvents.a;
+  const totalAssists = countAssists(events);
+
+  const tools = [
+    { type:'goal',        label:'Goal' },
+    { type:'assist',      label:'Assist', disabled: totalAssists >= totalGoals,
+      disabledReason:`Assists (${totalAssists}) can't exceed goals (${totalGoals})` },
+    { type:'own_goal',    label:'Own Goal' },
+    { type:'yellow_card', label:'Yellow Card' },
+    { type:'red_card',    label:'Red Card' },
+  ];
+
+  const handlePlayerClick = useCallback((player, teamId) => {
+    if (!selectedTool) return;
+    if (selectedTool.type === 'goal' || selectedTool.type === 'own_goal') {
+      const isHome = teamId === matchData.home_team_id;
+      let cur, max;
+      if (selectedTool.type === 'goal') { cur = isHome ? goalsFromEvents.h : goalsFromEvents.a; max = isHome ? score.home : score.away; }
+      else { cur = isHome ? goalsFromEvents.a : goalsFromEvents.h; max = isHome ? score.away : score.home; }
+      if (cur >= max) { alert(`⚠️ Goal limit reached (${max}). Update the score from Tournament page first.`); return; }
+    }
+    if (selectedTool.type === 'assist' && totalAssists >= totalGoals) {
+      alert(`⚠️ Assists (${totalAssists}) can't exceed goals (${totalGoals})!`); return;
+    }
+    if (selectedTool.type === 'yellow_card' && getYellowCount(events, player.id) >= 2) {
+      alert(`⚠️ ${player.name} already has 2 yellow cards. Use Red Card.`); return;
+    }
+    setPendingAction({ player, teamId });
+  }, [selectedTool, matchData, goalsFromEvents, score, events, totalAssists, totalGoals]);
+
+  const handleConfirm = async (minute) => {
+    const { player, teamId } = pendingAction;
+    let eventType = selectedTool.type;
+    if (eventType === 'yellow_card' && getYellowCount(events, player.id) === 1) {
+      eventType = 'red_card';
+      alert(`🟥 2nd Yellow → Automatic RED CARD for ${player.name}!`);
+    }
+    setPendingAction(null);
+    try {
+      const fd = new FormData();
+      fd.append('team_id', Number(teamId));
+      fd.append('player_id', Number(player.id));
+      fd.append('event_type', eventType);
+      fd.append('minute', minute);
+      await api.post(`/matches/${id}/record-event`, fd, { headers:{'Content-Type':'multipart/form-data'} });
+      setEvents(prev => [{
+        id:`local_${Date.now()}`, minute, type:eventType,
+        player:player.name, player_id:player.id, team_id:teamId, number:player.number,
+      }, ...prev].sort((a,b)=>b.minute-a.minute));
+      setSelectedTool(null);
+    } catch(err) { alert(`❌ ${err.response?.data?.detail||'Failed to record event'}`); }
+  };
+
+  const handleDeleteEvent = async (evId) => {
+    if (!window.confirm('Delete this event?')) return;
+
+    // local-only event (id starts with 'local_') — just remove from state
+    if (typeof evId === 'string' && evId.startsWith('local_')) {
+      setEvents(prev => prev.filter(e => e.id !== evId));
+      return;
+    }
+
+    // server event — delete from DB first, then update state
+    try {
+      await api.delete(`/events/${evId}`);
+      setEvents(prev => prev.filter(e => e.id !== evId));
     } catch (err) {
-      setError(`فشل التحميل: ${err.response?.data?.detail || err.message}`);
-    } finally {
-      setLoading(false);
+      alert(`❌ Failed to delete: ${err.response?.data?.detail || err.message}`);
     }
   };
 
-  const handleDropOnPlayer = async (player, teamId) => {
-    if (!selectedTool) { alert('⚠️ اختر أداة أولاً!'); return; }
-    if (!window.confirm(`تسجيل ${selectedTool.label} لـ ${player.name}?`)) return;
-
+  const handleFinish = async () => {
+    if (!window.confirm('End the match and save the final score?')) return;
     try {
-      const formData = new FormData();
-      formData.append('team_id', Number(teamId)); // تحويل لصريح
-      formData.append('player_id', Number(player.id)); // تحويل لصريح
-      formData.append('event_type', String(selectedTool.type));
-      
-      // ✅ التأكد من أن الدقيقة رقم صحيح دائماً
-      const currentMinute = parseInt(minute) || 0;
-      formData.append('minute', currentMinute);
-
-      console.log("Sending event:", { teamId, playerId: player.id, type: selectedTool.type, minute: currentMinute });
-
-      await api.post(`/matches/${id}/record-event`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-
-      let { home: nh, away: na } = score;
-      if (selectedTool.type === 'goal') { if (teamId === matchData.home_team_id) nh++; else na++; }
-      else if (selectedTool.type === 'own_goal') { if (teamId === matchData.home_team_id) na++; else nh++; }
-      setScore({ home: nh, away: na });
-
-      setEvents([{ id: Date.now(), minute: currentMinute, type: selectedTool.type, player: player.name, team_id: teamId, icon: selectedTool.icon, number: player.number }, ...events]);
-      alert('✅ تم التسجيل!');
-      setSelectedTool(null);
-    } catch (err) {
-      console.error("Event Error:", err);
-      const msg = err.response?.data?.detail || "حدث خطأ غير معروف";
-      alert(`❌ فشل: ${msg}`);
-    }
+      await api.post(
+        `/matches/update-details?match_id=${id}`,
+        { score_home: score.home, score_away: score.away, status: 'finished' },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      navigate('/admin/dashboard');
+    } catch(err) { alert(`❌ ${err.response?.data?.detail || err.message}`); }
   };
 
   if (loading) return (
-    <div className="flex items-center justify-center h-screen bg-gray-900 text-white text-lg">
-      <span className="animate-pulse">⚽ جاري تحضير الملعب...</span>
+    <div className="flex items-center justify-center h-screen" style={{ background:'#050c14' }}>
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-2 border-green-500 border-t-transparent rounded-full animate-spin"/>
+        <span className="text-gray-500 text-xs font-bold uppercase tracking-widest">Loading pitch…</span>
+      </div>
     </div>
   );
-  if (error || !matchData) return (
-    <div className="p-10 text-center text-red-400 bg-gray-900 h-screen flex flex-col items-center justify-center gap-4">
-      <div className="text-5xl">⚠️</div>
-      <p className="text-lg">{error}</p>
-      <button onClick={() => navigate(-1)} className="bg-blue-600 hover:bg-blue-700 px-6 py-2 rounded-lg text-white font-bold transition">عودة</button>
+  if (error||!matchData) return (
+    <div className="flex flex-col items-center justify-center h-screen gap-4 text-red-400" style={{ background:'#050c14' }}>
+      <div className="text-5xl">⚠️</div><p className="text-sm">{error||'Match not found'}</p>
+      <button onClick={()=>navigate(-1)} className="px-5 py-2 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-500 transition">← Back</button>
     </div>
   );
 
   return (
-    <div className="flex h-screen bg-gray-900 text-white overflow-hidden" dir="rtl">
-      {/* شريط الأدوات */}
-      <div className="w-20 bg-gray-800 flex flex-col items-center py-5 gap-4 border-l border-gray-700 z-30 shadow-2xl shrink-0">
-        <h3 className="text-[9px] font-bold text-gray-400 uppercase text-center leading-tight">أدوات<br />التحكيم</h3>
-        {tools.map((tool) => (
-          <button key={tool.type} draggable onDragStart={() => setSelectedTool(tool)} onClick={() => setSelectedTool(selectedTool?.type === tool.type ? null : tool)}
-            className={`w-12 h-12 rounded-full flex items-center justify-center text-xl cursor-pointer shadow-lg border-2 transition-all duration-200 hover:scale-110 focus:outline-none ${selectedTool?.type === tool.type ? 'ring-4 ring-green-400 scale-110 bg-gray-700' : 'border-gray-600 opacity-80 hover:opacity-100'} ${tool.color}`} title={tool.label}>
-            {tool.icon}
-          </button>
-        ))}
-        <div className="mt-auto text-center bg-gray-900 p-2 rounded-lg border border-gray-700 w-16">
-          <div className="text-[9px] text-gray-500 mb-0.5">الدقيقة</div>
-          <div className="text-xl font-mono font-black text-green-400">{minute}'</div>
+    <div dir="ltr" className="flex h-screen overflow-hidden" style={{ background:'#050c14' }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700;800&display=swap');
+        * { font-family: 'Barlow Condensed', system-ui, sans-serif; }
+        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:4px}
+      `}</style>
+
+      {/* LEFT TOOLBAR */}
+      <div className="w-[72px] flex flex-col items-center py-5 gap-5 border-r shrink-0"
+        style={{ background:'#06111e', borderColor:'rgba(255,255,255,0.06)' }}>
+        <div className="w-8 h-8 rounded-xl flex items-center justify-center text-base mb-1 shrink-0"
+          style={{ background:'linear-gradient(135deg,#1d4ed8,#0ea5e9)' }}>⚽</div>
+        <div className="w-full px-2.5 space-y-3">
+          {tools.map(t => (
+            <ToolBtn key={t.type} tool={t}
+              active={selectedTool?.type===t.type}
+              disabled={t.disabled}
+              onClick={()=>!t.disabled&&setSelectedTool(selectedTool?.type===t.type?null:t)} />
+          ))}
+        </div>
+        <div className="mt-auto w-full px-2">
+          <div className="rounded-xl py-2 text-center border" style={{ background:'#0a1628', borderColor:'rgba(255,255,255,0.07)' }}>
+            <div className="text-[8px] uppercase tracking-widest text-gray-600 font-bold">Min</div>
+            <div className="text-xl font-black text-green-400" style={{ fontFamily:'monospace' }}>{matchMinute}'</div>
+          </div>
         </div>
       </div>
 
-      {/* الملعب */}
+      {/* PITCH */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="shrink-0 bg-gray-900/95 backdrop-blur border-b border-gray-700 px-4 py-3 flex items-center justify-between shadow-2xl z-30">
-          <div className="flex-1 text-center"><h2 className="font-black text-blue-400 text-sm md:text-base truncate">{matchData.home}</h2></div>
-          <div className="flex items-center gap-2 bg-black px-6 py-2 rounded-xl border border-gray-600 mx-4 shadow-inner">
-            <span className="text-2xl md:text-3xl font-mono font-black text-white">{score.home}</span>
-            <span className="text-gray-500 text-xl font-light">–</span>
-            <span className="text-2xl md:text-3xl font-mono font-black text-white">{score.away}</span>
+        {/* score */}
+        <div className="shrink-0 flex items-center justify-between px-6 py-3 border-b"
+          style={{ background:'#040b14', borderColor:'rgba(255,255,255,0.06)' }}>
+          <div className="flex-1 text-right">
+            <div className="text-sm font-black text-blue-400 truncate">{matchData.home}</div>
           </div>
-          <div className="flex-1 text-center"><h2 className="font-black text-red-400 text-sm md:text-base truncate">{matchData.away}</h2></div>
+          <div className="flex flex-col items-center mx-6 gap-0.5">
+            <div className="flex items-center gap-2 px-5 py-1.5 rounded-xl border"
+              style={{ background:'#0a1628', borderColor:'rgba(255,255,255,0.09)' }}>
+              <span className="text-2xl font-black text-white" style={{ fontFamily:'monospace' }}>{score.home}</span>
+              <span className="text-gray-600 text-xl font-thin">—</span>
+              <span className="text-2xl font-black text-white" style={{ fontFamily:'monospace' }}>{score.away}</span>
+            </div>
+            <div className="flex items-center gap-3 text-[10px] font-mono">
+              <span style={{ color: goalsFromEvents.h>=score.home&&score.home>0?'#22c55e':'#374151' }}>⚽{goalsFromEvents.h}/{score.home}</span>
+              <span style={{ color: goalsFromEvents.a>=score.away&&score.away>0?'#22c55e':'#374151' }}>{goalsFromEvents.a}/{score.away}⚽</span>
+            </div>
+          </div>
+          <div className="flex-1 text-left">
+            <div className="text-sm font-black text-red-400 truncate">{matchData.away}</div>
+          </div>
         </div>
+
+        {/* active tool hint */}
+        {selectedTool && (
+          <div className="shrink-0 text-center py-1.5 text-[11px] font-black uppercase tracking-widest animate-pulse"
+            style={{ background:(EVENT_META[selectedTool.type]?.color||'#fff')+'14', color:EVENT_META[selectedTool.type]?.color }}>
+            {EVENT_META[selectedTool.type]?.icon} {EVENT_META[selectedTool.type]?.label} — tap a player
+          </div>
+        )}
 
         <div className="flex-1 flex overflow-hidden">
-          <PitchHalf lineup={homeLineup} teamName={matchData.home} teamId={matchData.home_team_id} onDrop={handleDropOnPlayer} tool={selectedTool} side="blue" flip={false} />
-          <PitchHalf lineup={awayLineup} teamName={matchData.away} teamId={matchData.away_team_id} onDrop={handleDropOnPlayer} tool={selectedTool} side="red" flip={true} />
+          <PitchHalf lineup={homeLineup} teamName={matchData.home} teamId={matchData.home_team_id}
+            onDrop={handlePlayerClick} tool={selectedTool} side="blue" flip={false} events={events} />
+          <PitchHalf lineup={awayLineup} teamName={matchData.away} teamId={matchData.away_team_id}
+            onDrop={handlePlayerClick} tool={selectedTool} side="red" flip={true} events={events} />
         </div>
       </div>
 
-      {/* الأحداث */}
-      <div className="w-64 bg-gray-900 border-r border-gray-700 flex flex-col shadow-2xl z-20 hidden lg:flex shrink-0">
-        <div className="p-3 bg-gray-800 border-b border-gray-700 font-bold text-sm flex justify-between items-center">
-          <span>📝 أحداث المباراة</span>
-          <span className="text-xs bg-gray-700 px-2 py-0.5 rounded-full">{events.length}</span>
+      {/* RIGHT PANEL */}
+      <div className="w-60 flex flex-col shrink-0 border-l overflow-hidden"
+        style={{ background:'#06111e', borderColor:'rgba(255,255,255,0.06)' }}>
+        <div className="px-4 py-3 border-b flex items-center justify-between shrink-0"
+          style={{ borderColor:'rgba(255,255,255,0.06)' }}>
+          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Events</span>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+            style={{ background:'rgba(255,255,255,0.06)', color:'#4b5563' }}>{events.length}</span>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-2 scrollbar-thin scrollbar-thumb-gray-700">
-          {events.length === 0 ? (
-            <div className="text-center text-gray-500 mt-12 text-sm">
-              <div className="text-4xl mb-3">📭</div>
-              <p className="text-xs leading-relaxed">اختر أداة ثم اضغط على اللاعب</p>
+
+        <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+          {events.length===0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center py-10">
+              <div className="text-3xl mb-2 opacity-15">📋</div>
+              <p className="text-[10px] text-gray-600 font-bold uppercase tracking-wider">No events yet</p>
+              <p className="text-[9px] text-gray-700 mt-1">Select tool → click player</p>
             </div>
-          ) : (
-            events.map((ev) => (
-              <div key={ev.id} className={`flex items-center gap-2 p-2.5 rounded-lg border-r-4 shadow transition-all text-sm ${ev.team_id === matchData.home_team_id ? 'bg-blue-900/20 border-blue-500' : 'bg-red-900/20 border-red-500'}`}>
-                <span className="font-mono font-bold text-yellow-400 text-xs bg-gray-800 rounded px-1 shrink-0">{ev.minute}'</span>
-                <span className="text-xl">{ev.icon}</span>
-                <div className="min-w-0 flex-1">
-                  <div className="font-bold text-xs truncate text-gray-200">#{ev.number} {ev.player}</div>
-                  <div className="text-[9px] text-gray-400 uppercase tracking-wide">{ev.type.replace('_', ' ')}</div>
-                </div>
-              </div>
-            ))
-          )}
+          ) : events.map(ev => (
+            <EventRow key={ev.id} ev={ev} onDelete={handleDeleteEvent} />
+          ))}
         </div>
-        <div className="p-3 border-t border-gray-700 bg-gray-800">
-        <button
-  onClick={async () => {
-    if (!window.confirm('هل أنت متأكد من إنهاء المباراة وحفظ النتيجة النهائية؟')) return;
-    
-    try {
-      // إرسال النتيجة النهائية والحالة
-      const formData = new FormData();
-      formData.append('score_home', score.home);
-      formData.append('score_away', score.away);
-      formData.append('status', 'finished');
 
-      await api.post(`/matches/update-details?match_id=${id}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-
-      alert(`✅ انتهت المباراة! النتيجة النهائية: ${score.home} - ${score.away}`);
-      navigate('/admin/dashboard');
-    } catch (err) {
-      console.error("Finish Error:", err);
-      alert(`❌ فشل حفظ النتيجة: ${err.response?.data?.detail || err.message}`);
-    }
-  }}
-  className="w-full bg-green-600 hover:bg-green-700 active:scale-95 text-white font-bold py-2 rounded-lg transition text-sm"
->
-  🏁 إنهاء المباراة
-</button>
+        <div className="p-3 border-t space-y-2 shrink-0" style={{ borderColor:'rgba(255,255,255,0.06)' }}>
+          <button onClick={handleFinish}
+            className="w-full py-2.5 rounded-xl text-sm font-black uppercase tracking-wider text-white hover:opacity-90 active:scale-95 transition-all"
+            style={{ background:'linear-gradient(135deg,#15803d,#166534)' }}>
+            🏁 End Match
+          </button>
+          <button onClick={()=>navigate(-1)}
+            className="w-full py-2 rounded-xl text-xs font-bold uppercase tracking-wider text-gray-600 border border-gray-800 hover:text-gray-400 hover:border-gray-700 transition-all">
+            ← Back
+          </button>
         </div>
       </div>
+
+      {/* MINUTE MODAL */}
+      {pendingAction && (
+        <MinuteModal tool={selectedTool} player={pendingAction.player}
+          matchMinute={matchMinute} onConfirm={handleConfirm} onCancel={()=>setPendingAction(null)} />
+      )}
     </div>
   );
 };

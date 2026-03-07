@@ -2,12 +2,13 @@ from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, Table
 from sqlalchemy.orm import relationship
 from app.database import Base
 
-# جدول وسيط لربط الفرق بالبطولات
+# Pivot table linking teams to tournaments (many-to-many)
 tournament_teams = Table(
     'tournament_teams', Base.metadata,
     Column('tournament_id', Integer, ForeignKey('tournaments.id'), primary_key=True),
     Column('team_id', Integer, ForeignKey('teams.id'), primary_key=True)
 )
+
 
 class Tournament(Base):
     __tablename__ = "tournaments"
@@ -69,7 +70,7 @@ class Coach(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
-    photo = Column(String(500), nullable=True)       # ✅ صورة المدرب
+    photo = Column(String(500), nullable=True)       # Coach profile photo
     team_id = Column(Integer, ForeignKey("teams.id"))
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=True)
 
@@ -82,7 +83,7 @@ class Referee(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False)
-    photo = Column(String(500), nullable=True)       # ✅ صورة الحكم
+    photo = Column(String(500), nullable=True)       # Referee profile photo
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=True)
 
     user = relationship("User", backref="referee_profile", uselist=False)
@@ -114,9 +115,9 @@ class Match(Base):
     round_number = Column(String(20), nullable=True)
     group_name = Column(String(10), nullable=True)
     leg_number = Column(Integer, default=1, nullable=True)
-    penalty_home = Column(Integer, nullable=True)     # ✅ ركلات الترجيح
-    penalty_away = Column(Integer, nullable=True)     # ✅ ركلات الترجيح
-    referee_report = Column(String(500), nullable=True)  # ✅ مسار PDF تقرير الحكم
+    penalty_home = Column(Integer, nullable=True)     # Penalty shootout score (home)
+    penalty_away = Column(Integer, nullable=True)     # Penalty shootout score (away)
+    referee_report = Column(String(500), nullable=True)  # Path to referee PDF report
 
     tournament = relationship("Tournament", back_populates="matches")
     home_team = relationship("Team", foreign_keys=[home_team_id], back_populates="home_matches")

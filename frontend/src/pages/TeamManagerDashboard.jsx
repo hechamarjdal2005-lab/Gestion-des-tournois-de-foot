@@ -2,194 +2,480 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '../store/authStore';
 import api from '../services/api';
 
+/*
+  DESIGN: Premium Club Management Portal
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Layout:  Fixed sidebar (left) + scrollable main content
+  Flow:    LTR — English
+  Palette: #080a0f deep navy · #00e5a0 emerald · #111520 panel · #fff text
+  Font:    Syne (display) + DM Sans (UI)
+  Vibe:    Elite football club HQ — modern, athletic, sharp
+*/
+
+const BASE = 'http://127.0.0.1:8000';
+
+const injectFonts = () => {
+  if (document.getElementById('tm-fonts')) return;
+  const l = document.createElement('link');
+  l.id = 'tm-fonts'; l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap';
+  document.head.appendChild(l);
+};
+
+/* ══════════ ATOMS ══════════ */
+
+const Toast = ({ msg }) => {
+  if (!msg?.text) return null;
+  const ok = msg.type === 'success';
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '12px 18px', borderRadius: 14, marginBottom: 20,
+      background: ok ? 'rgba(0,229,160,0.07)' : 'rgba(255,90,90,0.07)',
+      border: `1px solid ${ok ? 'rgba(0,229,160,0.25)' : 'rgba(255,90,90,0.25)'}`,
+      color: ok ? '#00e5a0' : '#ff6b6b', fontSize: 13, fontFamily: "'DM Sans',sans-serif",
+    }}>
+      <span>{ok ? '✓' : '✗'}</span> {msg.text}
+    </div>
+  );
+};
+
+const Lbl = ({ children }) => (
+  <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '2px', color: '#2e3748', marginBottom: 6, fontFamily: "'DM Sans',sans-serif", textTransform: 'uppercase' }}>{children}</p>
+);
+
+const Inp = (props) => (
+  <input {...props} style={{
+    background: '#0a0d14', border: '1px solid #1c2236', color: '#e2e8f0',
+    borderRadius: 10, padding: '10px 13px', fontSize: 13, width: '100%',
+    outline: 'none', fontFamily: "'DM Sans',sans-serif",
+    transition: 'border-color 0.15s, box-shadow 0.15s', ...props.style,
+  }}
+  onFocus={e => { e.target.style.borderColor = '#00e5a0'; e.target.style.boxShadow = '0 0 0 3px rgba(0,229,160,0.08)'; }}
+  onBlur={e => { e.target.style.borderColor = '#1c2236'; e.target.style.boxShadow = 'none'; }}
+  />
+);
+
+const Sel = ({ children, ...props }) => (
+  <select {...props} style={{
+    background: '#0a0d14', border: '1px solid #1c2236', color: '#e2e8f0',
+    borderRadius: 10, padding: '10px 13px', fontSize: 13, width: '100%',
+    outline: 'none', fontFamily: "'DM Sans',sans-serif",
+  }}>{children}</select>
+);
+
+const Btn = ({ children, c = 'emerald', full, sm, ...props }) => {
+  const map = {
+    emerald: { bg: 'linear-gradient(135deg,#00e5a0,#00b87a)', color: '#080a0f', shadow: '0 4px 20px rgba(0,229,160,0.2)' },
+    red:     { bg: 'rgba(255,107,107,0.08)', color: '#ff6b6b', shadow: 'none', border: '1px solid rgba(255,107,107,0.2)' },
+    ghost:   { bg: 'rgba(255,255,255,0.04)', color: '#4a5568', shadow: 'none', border: '1px solid #1c2236' },
+    slate:   { bg: '#1a2035', color: '#94a3b8', shadow: 'none', border: '1px solid #232b3e' },
+  }[c];
+  return (
+    <button {...props} style={{
+      background: map.bg, color: map.color, boxShadow: map.shadow,
+      border: map.border || 'none', borderRadius: 10,
+      padding: sm ? '6px 13px' : full ? '11px 18px' : '9px 16px',
+      fontSize: sm ? 11 : 13, fontWeight: 600, cursor: 'pointer',
+      width: full ? '100%' : undefined,
+      transition: 'transform 0.1s, opacity 0.15s',
+      fontFamily: "'DM Sans',sans-serif",
+      opacity: props.disabled ? 0.35 : 1,
+    }}
+    onMouseEnter={e => { if (!props.disabled) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}>
+      {children}
+    </button>
+  );
+};
+
+const positionStyle = (pos) => ({
+  Goalkeeper: { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.25)' },
+  Defender:   { bg: 'rgba(56,189,248,0.1)', color: '#38bdf8', border: 'rgba(56,189,248,0.25)' },
+  Midfielder: { bg: 'rgba(0,229,160,0.1)',  color: '#00e5a0', border: 'rgba(0,229,160,0.25)' },
+  Forward:    { bg: 'rgba(251,113,133,0.1)', color: '#fb7185', border: 'rgba(251,113,133,0.25)' },
+}[pos] || { bg: 'rgba(255,255,255,0.05)', color: '#94a3b8', border: 'rgba(255,255,255,0.1)' });
+
+const posLabel = (pos) => ({ Goalkeeper: 'GK', Defender: 'DEF', Midfielder: 'MID', Forward: 'FWD' }[pos] || pos);
+
+/* ══════════════════════════════════════════
+   SIDEBAR
+══════════════════════════════════════════ */
+const Sidebar = ({ tab, setTab, playerCount, team, logout }) => {
+  const NAV = [
+    { id: 'squad',   icon: '👥', label: 'Squad',    count: playerCount },
+    { id: 'add',     icon: '➕', label: 'Add Player' },
+  ];
+
+  const needed = Math.max(0, 22 - playerCount);
+  const pct = Math.min(100, Math.round((playerCount / 22) * 100));
+
+  return (
+    <aside style={{
+      position: 'fixed', left: 0, top: 0, bottom: 0, width: 240,
+      background: '#0a0d14', borderRight: '1px solid #141826',
+      display: 'flex', flexDirection: 'column', zIndex: 40, direction: 'ltr',
+    }}>
+      {/* Brand */}
+      <div style={{ padding: '26px 22px 18px', borderBottom: '1px solid #141826' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {team?.logo
+            ? <img src={`${BASE}${team.logo}`} style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'cover', border: '1px solid rgba(0,229,160,0.2)' }} />
+            : <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#00e5a0,#00916a)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>⚽</div>
+          }
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: "'Syne',sans-serif", lineHeight: 1.1 }}>{team?.name || 'My Club'}</p>
+            <p style={{ fontSize: 9, color: '#00e5a0', letterSpacing: '2px', fontFamily: "'DM Sans',sans-serif", opacity: 0.7, marginTop: 2 }}>MANAGER</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Squad progress */}
+      <div style={{ padding: '14px 22px', borderBottom: '1px solid #141826' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ fontSize: 10, color: '#2e3748', fontFamily: "'DM Sans',sans-serif", letterSpacing: '1.5px', fontWeight: 600 }}>SQUAD SIZE</span>
+          <span style={{ fontSize: 11, color: playerCount >= 22 ? '#00e5a0' : '#fb7185', fontFamily: "'DM Sans',sans-serif", fontWeight: 600 }}>{playerCount}/22</span>
+        </div>
+        <div style={{ height: 4, background: '#141826', borderRadius: 99, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: playerCount >= 22 ? 'linear-gradient(90deg,#00e5a0,#00b87a)' : 'linear-gradient(90deg,#fb7185,#f43f5e)', borderRadius: 99, transition: 'width 0.4s ease' }} />
+        </div>
+        {needed > 0 && <p style={{ fontSize: 10, color: '#fb7185', marginTop: 5, fontFamily: "'DM Sans',sans-serif" }}>{needed} more players needed</p>}
+      </div>
+
+      {/* Nav */}
+      <nav style={{ flex: 1, padding: '14px 10px', overflowY: 'auto' }}>
+        <p style={{ fontSize: 9, fontWeight: 600, color: '#1e2636', letterSpacing: '2.5px', padding: '0 12px', marginBottom: 8, fontFamily: "'DM Sans',sans-serif" }}>NAVIGATION</p>
+        {NAV.map(n => {
+          const active = tab === n.id;
+          return (
+            <button key={n.id} onClick={() => setTab(n.id)} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '9px 12px', borderRadius: 9, width: '100%', textAlign: 'left', cursor: 'pointer',
+              background: active ? 'rgba(0,229,160,0.08)' : 'transparent',
+              border: active ? '1px solid rgba(0,229,160,0.18)' : '1px solid transparent',
+              marginBottom: 2, transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; }}
+            onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
+              <span style={{ fontSize: 14, width: 20, textAlign: 'center' }}>{n.icon}</span>
+              <span style={{ flex: 1, fontSize: 13, fontWeight: active ? 600 : 400, color: active ? '#00e5a0' : '#4a5568', fontFamily: "'DM Sans',sans-serif" }}>{n.label}</span>
+              {n.count !== undefined && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 99,
+                  background: active ? 'rgba(0,229,160,0.15)' : 'rgba(255,255,255,0.04)',
+                  color: active ? '#00e5a0' : '#2e3748', fontFamily: "'DM Sans',sans-serif" }}>
+                  {n.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* User */}
+      <div style={{ padding: '14px 10px', borderTop: '1px solid #141826' }}>
+        <div style={{ background: '#080a0f', borderRadius: 10, padding: '11px 13px', marginBottom: 8 }}>
+          <p style={{ fontSize: 10, color: '#00e5a0', fontWeight: 600, letterSpacing: '1px', fontFamily: "'DM Sans',sans-serif" }}>TEAM MANAGER</p>
+          <p style={{ fontSize: 11, color: '#2e3748', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: "'DM Sans',sans-serif", marginTop: 2 }}>{team?.colors || 'Club Colors'}</p>
+        </div>
+        <button onClick={logout} style={{
+          width: '100%', padding: '8px', borderRadius: 9, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+          background: 'transparent', border: '1px solid #1c2236', color: '#2e3748',
+          fontFamily: "'DM Sans',sans-serif", transition: 'all 0.15s',
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,107,107,0.06)'; e.currentTarget.style.color = '#ff6b6b'; e.currentTarget.style.borderColor = 'rgba(255,107,107,0.2)'; }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#2e3748'; e.currentTarget.style.borderColor = '#1c2236'; }}>
+          Sign out →
+        </button>
+      </div>
+    </aside>
+  );
+};
+
+/* ══════════════════════════════════════════
+   ADD PLAYER FORM
+══════════════════════════════════════════ */
+const AddPlayerPanel = ({ onSuccess, onCancel }) => {
+  const [data, setData] = useState({ name: '', position: 'Forward', jersey_number: '', email: '' });
+  const [photo, setPhoto] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!data.name || !data.jersey_number) { setErr('Name and jersey number are required.'); return; }
+    setLoading(true); setErr('');
+    try {
+      const fd = new FormData();
+      fd.append('name', data.name);
+      fd.append('position', data.position);
+      fd.append('jersey_number', parseInt(data.jersey_number));
+      if (data.email) fd.append('email', data.email);
+      if (photo) fd.append('photo', photo);
+      await api.post('/players', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      onSuccess();
+    } catch (e) {
+      setErr(e.response?.data?.detail || 'Failed to add player.');
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div style={{ background: '#111520', border: '1px solid #1c2236', borderRadius: 18, padding: 28, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22 }}>
+        <div>
+          <p style={{ fontSize: 10, color: '#2e3748', letterSpacing: '2px', fontFamily: "'DM Sans',sans-serif", marginBottom: 3 }}>NEW REGISTRATION</p>
+          <h3 style={{ fontSize: 20, color: '#fff', fontFamily: "'Syne',sans-serif" }}>Add Player</h3>
+        </div>
+        <Btn c="ghost" sm onClick={onCancel}>✕ Cancel</Btn>
+      </div>
+
+      {err && <div style={{ background: 'rgba(255,107,107,0.07)', border: '1px solid rgba(255,107,107,0.2)', color: '#ff6b6b', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 16, fontFamily: "'DM Sans',sans-serif" }}>{err}</div>}
+
+      <form onSubmit={submit}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <Lbl>Full Name *</Lbl>
+            <Inp placeholder="Mohamed Salah" required value={data.name} onChange={e => setData({ ...data, name: e.target.value })} />
+          </div>
+          <div>
+            <Lbl>Jersey Number *</Lbl>
+            <Inp type="number" min="1" max="99" placeholder="10" required value={data.jersey_number} onChange={e => setData({ ...data, jersey_number: e.target.value })} />
+          </div>
+          <div>
+            <Lbl>Position *</Lbl>
+            <Sel value={data.position} onChange={e => setData({ ...data, position: e.target.value })}>
+              <option value="Goalkeeper">Goalkeeper</option>
+              <option value="Defender">Defender</option>
+              <option value="Midfielder">Midfielder</option>
+              <option value="Forward">Forward</option>
+            </Sel>
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <Lbl>Email (optional)</Lbl>
+            <Inp type="email" placeholder="player@club.com" value={data.email} onChange={e => setData({ ...data, email: e.target.value })} />
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <Lbl>Player Photo</Lbl>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <input type="file" accept="image/*" onChange={e => setPhoto(e.target.files[0])}
+                style={{ flex: 1, fontSize: 12, color: '#4a5568', background: '#0a0d14', border: '1px solid #1c2236', borderRadius: 10, padding: '8px 12px', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }} />
+              {photo && <img src={URL.createObjectURL(photo)} style={{ width: 38, height: 38, borderRadius: 9, objectFit: 'cover', border: '1px solid rgba(0,229,160,0.25)' }} />}
+            </div>
+          </div>
+        </div>
+        <Btn type="submit" c="emerald" full disabled={loading}>
+          {loading ? '⏳  Registering...' : '✓  Register Player'}
+        </Btn>
+      </form>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════
+   SQUAD TABLE
+══════════════════════════════════════════ */
+const SquadTable = ({ players, onAddClick }) => {
+  const [filter, setFilter] = useState('All');
+  const POSITIONS = ['All', 'Goalkeeper', 'Defender', 'Midfielder', 'Forward'];
+  const filtered = filter === 'All' ? players : players.filter(p => p.position === filter);
+
+  const TH = ({ children, right }) => (
+    <th style={{ padding: '10px 14px', textAlign: right ? 'right' : 'left', fontSize: 10, fontWeight: 600, color: '#1e2636', letterSpacing: '2px', fontFamily: "'DM Sans',sans-serif", whiteSpace: 'nowrap' }}>
+      {children?.toUpperCase()}
+    </th>
+  );
+
+  return (
+    <div>
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
+        {POSITIONS.map(p => (
+          <button key={p} onClick={() => setFilter(p)} style={{
+            padding: '6px 14px', borderRadius: 99, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+            fontFamily: "'DM Sans',sans-serif", transition: 'all 0.15s',
+            background: filter === p ? 'rgba(0,229,160,0.1)' : 'rgba(255,255,255,0.03)',
+            border: `1px solid ${filter === p ? 'rgba(0,229,160,0.3)' : '#1c2236'}`,
+            color: filter === p ? '#00e5a0' : '#2e3748',
+          }}>{p}</button>
+        ))}
+        <button onClick={onAddClick} style={{
+          marginLeft: 'auto', padding: '6px 16px', borderRadius: 99, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+          background: 'linear-gradient(135deg,#00e5a0,#00b87a)', color: '#080a0f',
+          border: 'none', fontFamily: "'DM Sans',sans-serif",
+        }}>+ Add Player</button>
+      </div>
+
+      <div style={{ background: '#111520', border: '1px solid #1c2236', borderRadius: 16, overflow: 'hidden' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid #1c2236' }}>
+              <TH>#</TH><TH>Player</TH><TH>Position</TH><TH>Jersey</TH><TH>Status</TH>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr><td colSpan="5" style={{ padding: '48px', textAlign: 'center', color: '#1e2636', fontSize: 13, fontFamily: "'DM Sans',sans-serif" }}>
+                {players.length === 0 ? 'No players registered yet.' : `No ${filter} players found.`}
+              </td></tr>
+            ) : filtered.map((p, i) => {
+              const ps = positionStyle(p.position);
+              return (
+                <tr key={p.id} style={{ borderBottom: '1px solid #0e1118', transition: 'background 0.1s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.015)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                  <td style={{ padding: '13px 14px', color: '#1e2636', fontSize: 11, fontWeight: 700, fontFamily: "'DM Sans',sans-serif" }}>{String(i + 1).padStart(2, '0')}</td>
+                  <td style={{ padding: '13px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      {p.photo
+                        ? <img src={`${BASE}${p.photo}`} style={{ width: 34, height: 34, borderRadius: 9, objectFit: 'cover', border: '1px solid #1c2236' }} />
+                        : <div style={{ width: 34, height: 34, borderRadius: 9, background: 'rgba(0,229,160,0.06)', border: '1px solid rgba(0,229,160,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#00e5a0', fontFamily: "'Syne',sans-serif" }}>
+                            {p.name.charAt(0)}
+                          </div>
+                      }
+                      <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0', fontFamily: "'DM Sans',sans-serif" }}>{p.name}</span>
+                    </div>
+                  </td>
+                  <td style={{ padding: '13px 14px' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 99, background: ps.bg, color: ps.color, border: `1px solid ${ps.border}`, fontFamily: "'DM Sans',sans-serif", letterSpacing: '0.5px' }}>
+                      {posLabel(p.position)}
+                    </span>
+                  </td>
+                  <td style={{ padding: '13px 14px' }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: "'Syne',sans-serif", background: '#0a0d14', border: '1px solid #1c2236', borderRadius: 8, padding: '3px 10px' }}>
+                      {p.jersey_number || '—'}
+                    </span>
+                  </td>
+                  <td style={{ padding: '13px 14px' }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: '#00e5a0', fontFamily: "'DM Sans',sans-serif", display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: 99, background: '#00e5a0', display: 'inline-block' }} />Active
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════
+   MAIN COMPONENT
+══════════════════════════════════════════ */
 const TeamManagerDashboard = () => {
   const { user, logout } = useAuthStore();
   const [team, setTeam] = useState(null);
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  const [showAddPlayerForm, setShowAddPlayerForm] = useState(false);
-  const [newPlayer, setNewPlayer] = useState({ name: '', position: 'Forward', jersey_number: '', email: '' });
-  const [playerPhoto, setPlayerPhoto] = useState(null);
-  const [message, setMessage] = useState({ text: '', type: '' });
+  const [tab, setTab] = useState('squad');
+  const [msg, setMsg] = useState({ text: '', type: '' });
 
-  useEffect(() => { fetchTeamData(); }, []);
+  useEffect(() => { injectFonts(); fetchData(); }, []);
 
-  const fetchTeamData = async () => {
+  const fetchData = async () => {
     try {
-      const teamRes = await api.get('/me/team');
+      const [teamRes, playersRes] = await Promise.all([api.get('/me/team'), api.get('/me/players')]);
       setTeam(teamRes.data);
-      const playersRes = await api.get('/me/players');
       setPlayers(playersRes.data);
-    } catch (error) { console.error("Error:", error); } finally { setLoading(false); }
+    } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  const handleAddPlayer = async (e) => {
-    e.preventDefault();
-    
-    if (!newPlayer.name || !newPlayer.position || !newPlayer.jersey_number) {
-      setMessage({ text: '❌ يرجى ملء الاسم، المركز، ورقم القميص', type: 'error' });
-      return;
-    }
-
-    try {
-      const formData = new FormData();
-      formData.append('name', newPlayer.name);
-      formData.append('position', newPlayer.position);
-      formData.append('jersey_number', parseInt(newPlayer.jersey_number));
-      
-      if (newPlayer.email) formData.append('email', newPlayer.email);
-      if (playerPhoto) formData.append('photo', playerPhoto);
-
-      await api.post('/players', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-
-      setMessage({ text: '✅ تم إضافة اللاعب بنجاح!', type: 'success' });
-      setNewPlayer({ name: '', position: 'Forward', jersey_number: '', email: '' });
-      setPlayerPhoto(null);
-      setShowAddPlayerForm(false);
-      fetchTeamData();
-      setTimeout(() => setMessage({ text: '', type: '' }), 3000);
-      
-    } catch (error) {
-      console.error("Add Player Error:", error);
-      const errorMsg = error.response?.data?.detail || "فشل إضافة اللاعب";
-      setMessage({ text: `❌ ${errorMsg}`, type: 'error' });
-      if (error.response?.status === 422) {
-        console.log("Validation Errors:", error.response.data);
-      }
-    }
+  const handlePlayerAdded = () => {
+    setMsg({ text: 'Player registered successfully!', type: 'success' });
+    setTimeout(() => setMsg({ text: '', type: '' }), 4000);
+    setTab('squad');
+    fetchData();
   };
 
-  if (loading) return <div className="flex items-center justify-center min-h-screen text-xl">جاري التحميل...</div>;
-  if (!team) return <div className="p-10 text-center text-red-500">لا يوجد فريق مرتبط.</div>;
+  if (loading) return (
+    <div style={{ background: '#080a0f', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#00e5a0', fontFamily: "'Syne',sans-serif", fontSize: 18 }}>
+      Loading squad...
+    </div>
+  );
+
+  if (!team) return (
+    <div style={{ background: '#080a0f', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ff6b6b', fontFamily: "'DM Sans',sans-serif" }}>
+      No team associated with this account.
+    </div>
+  );
 
   const playerCount = players.length;
-  const isWarning = playerCount < 22;
+  const needed = Math.max(0, 22 - playerCount);
+
+  // Position counts
+  const posCounts = players.reduce((acc, p) => { acc[p.position] = (acc[p.position] || 0) + 1; return acc; }, {});
 
   return (
-    <div className="container mx-auto p-6 bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-center mb-6 bg-white p-6 rounded-lg shadow-md border-r-4 border-green-600">
-        <div className="flex items-center gap-4">
-          {team.logo && <img src={`http://127.0.0.1:8000${team.logo}`} alt="Logo" className="h-16 w-16 object-cover rounded-full border-2 border-green-500" />}
-          <div>
-            <h2 className="text-3xl font-bold text-gray-800">{team.name}</h2>
-            <p className="text-gray-500">{team.role_in_team} | {team.colors}</p>
-          </div>
-        </div>
-        <button onClick={logout} className="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">خروج</button>
-      </div>
+    <div style={{ background: '#080a0f', minHeight: '100vh', fontFamily: "'DM Sans',sans-serif", color: '#e2e8f0', direction: 'ltr' }}>
+      {/* bg glow */}
+      <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', background: 'radial-gradient(ellipse 60% 40% at 60% 0%, rgba(0,229,160,0.04), transparent)' }} />
 
-      {isWarning && (
-        <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 mb-6 rounded shadow animate-pulse">
-          <div className="flex justify-between items-center">
-            <div>
-              <p className="font-bold text-lg">⚠️ تنبيه هام</p>
-              <p>عدد اللاعبين الحالي هو <span className="font-bold text-red-600">{playerCount}</span>. يجب إضافة <span className="font-bold">{22 - playerCount}</span> لاعبين على الأقل.</p>
+      <Sidebar tab={tab} setTab={setTab} playerCount={playerCount} team={team} logout={logout} />
+
+      <main style={{ marginLeft: 240, padding: '40px 48px', maxWidth: 900, minHeight: '100vh' }}>
+        <Toast msg={msg} />
+
+        {/* Header */}
+        <div style={{ marginBottom: 32 }}>
+          <p style={{ fontSize: 11, color: '#2e3748', letterSpacing: '2px', fontFamily: "'DM Sans',sans-serif", marginBottom: 4 }}>TEAM MANAGEMENT</p>
+          <h1 style={{ fontSize: 30, color: '#fff', fontFamily: "'Syne',sans-serif", lineHeight: 1.1, marginBottom: 6 }}>{team.name}</h1>
+          <p style={{ fontSize: 13, color: '#2e3748' }}>{team.colors} · {team.role_in_team}</p>
+        </div>
+
+        {/* Squad alert banner */}
+        {needed > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderRadius: 14, marginBottom: 24, background: 'rgba(251,113,133,0.06)', border: '1px solid rgba(251,113,133,0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 16 }}>⚠️</span>
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#fb7185', fontFamily: "'DM Sans',sans-serif" }}>Squad incomplete — {needed} more players needed</p>
+                <p style={{ fontSize: 11, color: '#2e3748', fontFamily: "'DM Sans',sans-serif", marginTop: 2 }}>Minimum 22 players required to participate.</p>
+              </div>
             </div>
-            <button onClick={() => setShowAddPlayerForm(true)} className="bg-yellow-600 text-white px-4 py-2 rounded hover:bg-yellow-700 font-bold">+ إضافة لاعب الآن</button>
-          </div>
-        </div>
-      )}
-      {!isWarning && (
-        <div className="bg-green-100 border-l-4 border-green-500 text-green-800 p-4 mb-6 rounded shadow">
-          <p className="font-bold">✅ الفريق مكتمل العدد ({playerCount} لاعب).</p>
-        </div>
-      )}
-
-      {message.text && (
-        <div className={`p-3 mb-4 rounded ${message.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{message.text}</div>
-      )}
-
-      <div className="mb-8">
-        {!showAddPlayerForm ? (
-          <button onClick={() => setShowAddPlayerForm(true)} className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 shadow flex items-center gap-2 font-bold">
-            ➕ إضافة لاعب جديد
-          </button>
-        ) : (
-          <div className="bg-white p-6 rounded-lg shadow-lg border border-green-200 animate-fade-in">
-            <h3 className="text-xl font-bold text-green-800 mb-4 border-b pb-2">بيانات اللاعب الجديد</h3>
-            <form onSubmit={handleAddPlayer} className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">اسم اللاعب الكامل *</label>
-                <input type="text" required className="w-full border p-2 rounded focus:ring-2 focus:ring-green-500 outline-none" value={newPlayer.name} onChange={(e) => setNewPlayer({...newPlayer, name: e.target.value})} placeholder="مثال: محمد صلاح" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">رقم القميص *</label>
-                <input type="number" required min="1" max="99" className="w-full border p-2 rounded focus:ring-2 focus:ring-green-500 outline-none" value={newPlayer.jersey_number} onChange={(e) => setNewPlayer({...newPlayer, jersey_number: e.target.value})} placeholder="10" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">المركز *</label>
-                <select className="w-full border p-2 rounded focus:ring-2 focus:ring-green-500 outline-none" value={newPlayer.position} onChange={(e) => setNewPlayer({...newPlayer, position: e.target.value})}>
-                  <option value="Goalkeeper">حارس مرمى</option>
-                  <option value="Defender">مدافع</option>
-                  <option value="Midfielder">لاعب وسط</option>
-                  <option value="Forward">مهاجم</option>
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">صورة اللاعب (من الجهاز)</label>
-                <input type="file" accept="image/*" onChange={(e) => setPlayerPhoto(e.target.files[0])} className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"/>
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">البريد الإلكتروني (اختياري)</label>
-                <input type="email" className="w-full border p-2 rounded focus:ring-2 focus:ring-green-500 outline-none" value={newPlayer.email} onChange={(e) => setNewPlayer({...newPlayer, email: e.target.value})} placeholder="player@example.com" />
-              </div>
-              <div className="md:col-span-2 flex gap-3 mt-4">
-                <button type="submit" className="flex-1 bg-green-600 text-white py-2 rounded font-bold hover:bg-green-700">حفظ اللاعب</button>
-                <button type="button" onClick={() => setShowAddPlayerForm(false)} className="flex-1 bg-gray-300 text-gray-700 py-2 rounded font-bold hover:bg-gray-400">إلغاء</button>
-              </div>
-            </form>
+            <Btn c="red" sm onClick={() => setTab('add')}>+ Add Now</Btn>
           </div>
         )}
-      </div>
 
-      <div className="bg-white p-6 rounded-lg shadow-md">
-        <h3 className="text-xl font-bold mb-4 text-gray-800 flex justify-between items-center">
-          <span>👥 قائمة اللاعبين ({playerCount})</span>
-          {isWarning && <span className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full animate-pulse">ناقص {22 - playerCount}</span>}
-        </h3>
-        {players.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 bg-gray-50 rounded">لا يوجد لاعبين مسجلين بعد.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-right border-collapse">
-              <thead className="bg-gray-100 text-gray-700 text-sm uppercase">
-                <tr>
-                  <th className="p-3">#</th><th className="p-3">الصورة</th><th className="p-3">الاسم</th><th className="p-3">القميص</th><th className="p-3">المركز</th><th className="p-3">الحالة</th>
-                </tr>
-              </thead>
-              <tbody>
-                {players.map((p, i) => (
-                  <tr key={p.id} className="border-b hover:bg-gray-50 transition">
-                    <td className="p-3 text-gray-500">{i + 1}</td>
-                    <td className="p-3">
-                      {p.photo ? (
-                        <img src={`http://127.0.0.1:8000${p.photo}`} alt={p.name} className="h-10 w-10 object-cover rounded-full border border-gray-300" />
-                      ) : (
-                        <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-bold">{p.name.charAt(0)}</div>
-                      )}
-                    </td>
-                    <td className="p-3 font-bold text-gray-800">{p.name}</td>
-                    <td className="p-3"><span className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-mono font-bold">{p.jersey_number || '-'}</span></td>
-                    <td className="p-3">
-                      <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                        p.position === 'Goalkeeper' ? 'bg-yellow-100 text-yellow-800' :
-                        p.position === 'Defender' ? 'bg-blue-100 text-blue-800' :
-                        p.position === 'Midfielder' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                      }`}>
-                        {p.position === 'Goalkeeper' ? 'حارس' : p.position === 'Defender' ? 'مدافع' : p.position === 'Midfielder' ? 'وسط' : 'مهاجم'}
-                      </span>
-                    </td>
-                    <td className="p-3 text-xs text-green-600 font-bold">✓ نشط</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        {needed === 0 && (
+          <div style={{ padding: '12px 18px', borderRadius: 14, marginBottom: 24, background: 'rgba(0,229,160,0.05)', border: '1px solid rgba(0,229,160,0.15)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: '#00e5a0', fontSize: 14 }}>✓</span>
+            <p style={{ fontSize: 13, color: '#00e5a0', fontFamily: "'DM Sans',sans-serif", fontWeight: 500 }}>Squad complete — {playerCount} players registered.</p>
           </div>
         )}
-      </div>
+
+        {/* Stat row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 28 }}>
+          {[
+            { label: 'Total Players', value: playerCount, color: '#00e5a0' },
+            { label: 'Goalkeepers',   value: posCounts.Goalkeeper  || 0, color: '#fbbf24' },
+            { label: 'Defenders',     value: posCounts.Defender    || 0, color: '#38bdf8' },
+            { label: 'Midfielders',   value: posCounts.Midfielder  || 0, color: '#00e5a0' },
+          ].map((s, i) => (
+            <div key={i} style={{ background: '#111520', border: '1px solid #1c2236', borderRadius: 14, padding: '18px 20px', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg,${s.color},transparent)` }} />
+              <p style={{ fontSize: 28, fontWeight: 800, color: '#fff', fontFamily: "'Syne',sans-serif", lineHeight: 1, marginBottom: 4 }}>{s.value}</p>
+              <p style={{ fontSize: 10, color: '#2e3748', fontFamily: "'DM Sans',sans-serif", letterSpacing: '1px' }}>{s.label.toUpperCase()}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Main content */}
+        {tab === 'add' && (
+          <AddPlayerPanel onSuccess={handlePlayerAdded} onCancel={() => setTab('squad')} />
+        )}
+
+        {tab === 'squad' && (
+          <SquadTable players={players} onAddClick={() => setTab('add')} />
+        )}
+      </main>
+
+      <style>{`
+        * { box-sizing: border-box; }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.3); }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #1c2236; border-radius: 99px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+      `}</style>
     </div>
   );
 };

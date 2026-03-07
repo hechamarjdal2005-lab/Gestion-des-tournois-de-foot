@@ -4,7 +4,7 @@ from typing import Optional
 class UserBase(BaseModel):
     name: str
     email: EmailStr
-    role: str  # نص عادي، ليس Enum
+    role: str 
 
 class UserCreate(UserBase):
     password: str

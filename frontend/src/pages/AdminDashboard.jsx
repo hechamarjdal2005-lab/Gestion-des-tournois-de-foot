@@ -3,463 +3,523 @@ import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuthStore } from '../store/authStore';
 
+const BASE = 'http://127.0.0.1:8000';
+
+const injectFonts = () => {
+  if (document.getElementById('adm-fonts')) return;
+  const l = document.createElement('link');
+  l.id = 'adm-fonts'; l.rel = 'stylesheet';
+  l.href = 'https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&display=swap';
+  document.head.appendChild(l);
+};
+
+const Toaster = ({ msg }) => {
+  if (!msg?.text) return null;
+  const ok = msg.type === 'success';
+  return (
+    <div className="flex items-center gap-3 px-5 py-3.5 rounded-2xl text-sm font-medium mb-6"
+      style={{ background: ok ? 'rgba(74,222,128,0.06)' : 'rgba(248,113,113,0.06)', border: `1px solid ${ok ? 'rgba(74,222,128,0.2)' : 'rgba(248,113,113,0.2)'}`, color: ok ? '#4ade80' : '#f87171' }}>
+      <span className="text-base shrink-0">{ok ? '✓' : '✗'}</span>
+      {msg.text}
+    </div>
+  );
+};
+
+const Lbl = ({ children }) => (
+  <p className="text-[10px] font-semibold uppercase tracking-[2px] mb-1.5" style={{ color: '#3a4050', fontFamily: "'Geist',sans-serif" }}>{children}</p>
+);
+const Inp = (props) => (
+  <input {...props}
+    style={{ background: '#0e1117', border: '1px solid #1e2433', color: '#e2e8f0', borderRadius: 12, padding: '10px 14px', fontSize: 13, width: '100%', outline: 'none', fontFamily: "'Geist',sans-serif", transition: 'border-color 0.15s, box-shadow 0.15s', ...props.style }}
+    onFocus={e => { e.target.style.borderColor = '#f0b429'; e.target.style.boxShadow = '0 0 0 3px rgba(240,180,41,0.1)'; }}
+    onBlur={e => { e.target.style.borderColor = '#1e2433'; e.target.style.boxShadow = 'none'; }}
+  />
+);
+const Sel = ({ children, ...props }) => (
+  <select {...props} style={{ background: '#0e1117', border: '1px solid #1e2433', color: '#e2e8f0', borderRadius: 12, padding: '10px 14px', fontSize: 13, width: '100%', outline: 'none', fontFamily: "'Geist',sans-serif" }}>
+    {children}
+  </select>
+);
+const Btn = ({ children, c = 'gold', full, sm, ...props }) => {
+  const map = {
+    gold:    { bg: 'linear-gradient(135deg,#f0b429 0%,#d4921a 100%)', color: '#0b0d11', shadow: '0 4px 20px rgba(240,180,41,0.25)' },
+    emerald: { bg: 'linear-gradient(135deg,#34d399 0%,#059669 100%)', color: '#0b0d11', shadow: '0 4px 20px rgba(52,211,153,0.25)' },
+    sky:     { bg: 'linear-gradient(135deg,#38bdf8 0%,#0284c7 100%)', color: '#0b0d11', shadow: '0 4px 20px rgba(56,189,248,0.25)' },
+    violet:  { bg: 'linear-gradient(135deg,#a78bfa 0%,#7c3aed 100%)', color: '#fff',    shadow: '0 4px 20px rgba(167,139,250,0.25)' },
+    rose:    { bg: 'rgba(248,113,113,0.08)', color: '#f87171', shadow: 'none', border: '1px solid rgba(248,113,113,0.2)' },
+    ghost:   { bg: 'rgba(255,255,255,0.04)', color: '#64748b', shadow: 'none', border: '1px solid #1e2433' },
+    amber:   { bg: 'rgba(251,191,36,0.08)', color: '#fbbf24', shadow: 'none', border: '1px solid rgba(251,191,36,0.2)' },
+  }[c];
+  return (
+    <button {...props} style={{
+      background: map.bg, color: map.color, boxShadow: map.shadow,
+      border: map.border || 'none', borderRadius: 12,
+      padding: sm ? '6px 14px' : full ? '12px 20px' : '9px 18px',
+      fontSize: sm ? 12 : 13, fontWeight: 600, cursor: 'pointer',
+      width: full ? '100%' : undefined, transition: 'opacity 0.15s, transform 0.1s',
+      fontFamily: "'Geist',sans-serif", letterSpacing: '0.2px',
+      opacity: props.disabled ? 0.35 : 1,
+    }}
+    onMouseEnter={e => { if (!props.disabled) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+    onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}>
+      {children}
+    </button>
+  );
+};
+const Card = ({ title, subtitle, children }) => (
+  <div style={{ background: '#161a22', border: '1px solid #1e2433', borderRadius: 20, overflow: 'hidden', marginBottom: 20 }}>
+    {(title || subtitle) && (
+      <div style={{ padding: '16px 24px', borderBottom: '1px solid #1e2433', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          {title && <p style={{ fontSize: 13, fontWeight: 600, color: '#fff', fontFamily: "'Geist',sans-serif" }}>{title}</p>}
+          {subtitle && <p style={{ fontSize: 11, color: '#3a4050', marginTop: 2, fontFamily: "'Geist',sans-serif" }}>{subtitle}</p>}
+        </div>
+      </div>
+    )}
+    <div style={{ padding: 24 }}>{children}</div>
+  </div>
+);
+const FmtBtn = ({ icon, title, desc, active, onClick }) => (
+  <button type="button" onClick={onClick} style={{
+    background: active ? 'rgba(240,180,41,0.08)' : 'rgba(255,255,255,0.02)',
+    border: `1px solid ${active ? 'rgba(240,180,41,0.45)' : '#1e2433'}`,
+    borderRadius: 14, padding: '14px 16px', textAlign: 'left', width: '100%', cursor: 'pointer',
+    transition: 'all 0.15s', boxShadow: active ? '0 0 24px rgba(240,180,41,0.07)' : 'none',
+  }}>
+    <div style={{ fontSize: 22, marginBottom: 8 }}>{icon}</div>
+    <div style={{ fontSize: 13, fontWeight: 700, color: active ? '#f0b429' : '#e2e8f0', marginBottom: 3, fontFamily: "'Geist',sans-serif" }}>{title}</div>
+    <div style={{ fontSize: 11, color: '#3a4050', fontFamily: "'Geist',sans-serif" }}>{desc}</div>
+  </button>
+);
+
+/* ── MODAL WRAPPER ── */
+const Modal = ({ title, subtitle, onClose, children, width = 520 }) => (
+  <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(8px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <div style={{ background: '#161a22', border: '1px solid #1e2433', borderRadius: 24, width: '100%', maxWidth: width, maxHeight: '90vh', overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: '#1e2433 transparent' }}>
+      <div style={{ padding: '20px 24px', borderBottom: '1px solid #1e2433', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', position: 'sticky', top: 0, background: '#161a22', zIndex: 10 }}>
+        <div>
+          <p style={{ fontSize: 15, fontWeight: 700, color: '#fff', fontFamily: "'Geist',sans-serif" }}>{title}</p>
+          {subtitle && <p style={{ fontSize: 11, color: '#3a4050', marginTop: 3, fontFamily: "'Geist',sans-serif" }}>{subtitle}</p>}
+        </div>
+        <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid #1e2433', borderRadius: 8, width: 30, height: 30, cursor: 'pointer', color: '#64748b', fontSize: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>✕</button>
+      </div>
+      <div style={{ padding: 24 }}>{children}</div>
+    </div>
+  </div>
+);
+
+/* ── FILE INPUT ── */
+const FileInput = ({ label, accept = 'image/*', value, onChange, preview }) => (
+  <div>
+    <Lbl>{label}</Lbl>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <input type="file" accept={accept} onChange={onChange}
+        style={{ flex: 1, fontSize: 12, color: '#64748b', background: '#0e1117', border: '1px solid #1e2433', borderRadius: 12, padding: '9px 12px', cursor: 'pointer' }} />
+      {preview && <img src={preview} style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover', border: '1px solid rgba(240,180,41,0.3)', flexShrink: 0 }} />}
+    </div>
+  </div>
+);
+
+/* ══════════════════════════════════════════
+   SIDEBAR
+══════════════════════════════════════════ */
+const Sidebar = ({ tab, setTab, counts, user, logout }) => {
+  const NAV = [
+    { id: 'overview',    icon: '◈',  label: 'Overview' },
+    { id: 'teams',       icon: '🛡',  label: 'Teams',       count: counts.teams },
+    { id: 'tournaments', icon: '🏆',  label: 'Tournaments', count: counts.tournaments },
+    { id: 'referees',    icon: '⚖',  label: 'Referees',    count: counts.referees },
+  ];
+  return (
+    <aside style={{ position: 'fixed', left: 0, top: 0, bottom: 0, width: 240, background: '#0e1117', borderRight: '1px solid #1a1f2e', display: 'flex', flexDirection: 'column', zIndex: 40, direction: 'ltr' }}>
+      <div style={{ padding: '28px 24px 20px', borderBottom: '1px solid #1a1f2e' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg,#f0b429,#c97d10)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>⚡</div>
+          <div>
+            <p style={{ fontSize: 14, fontWeight: 700, color: '#fff', letterSpacing: '0.5px', fontFamily: "'Geist',sans-serif", lineHeight: 1 }}>TOURNEY</p>
+            <p style={{ fontSize: 9, color: '#f0b429', letterSpacing: '2px', fontFamily: "'Geist',sans-serif", opacity: 0.7 }}>ADMIN</p>
+          </div>
+        </div>
+      </div>
+      <nav style={{ flex: 1, padding: '16px 12px', overflowY: 'auto' }}>
+        <p style={{ fontSize: 9, fontWeight: 700, color: '#2a3040', letterSpacing: '2.5px', padding: '0 12px', marginBottom: 8, fontFamily: "'Geist',sans-serif" }}>NAVIGATION</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {NAV.map(n => {
+            const active = tab === n.id;
+            return (
+              <button key={n.id} onClick={() => setTab(n.id)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 10, width: '100%', textAlign: 'left', cursor: 'pointer', background: active ? 'rgba(240,180,41,0.1)' : 'transparent', border: active ? '1px solid rgba(240,180,41,0.2)' : '1px solid transparent', transition: 'all 0.15s' }}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.04)'; }}
+                onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent'; }}>
+                <span style={{ fontSize: 15, width: 20, textAlign: 'center', flexShrink: 0 }}>{n.icon}</span>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: active ? 600 : 400, color: active ? '#f0b429' : '#64748b', fontFamily: "'Geist',sans-serif" }}>{n.label}</span>
+                {n.count !== undefined && <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: active ? 'rgba(240,180,41,0.2)' : 'rgba(255,255,255,0.05)', color: active ? '#f0b429' : '#3a4050', fontFamily: "'Geist',sans-serif" }}>{n.count}</span>}
+              </button>
+            );
+          })}
+        </div>
+      </nav>
+      <div style={{ padding: '16px 12px', borderTop: '1px solid #1a1f2e' }}>
+        <div style={{ background: '#0b0d11', borderRadius: 12, padding: '12px 14px', marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 30, height: 30, borderRadius: 8, background: 'linear-gradient(135deg,rgba(240,180,41,0.2),rgba(240,180,41,0.05))', border: '1px solid rgba(240,180,41,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}>👤</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 10, color: '#f0b429', fontWeight: 600, letterSpacing: '1px', fontFamily: "'Geist',sans-serif" }}>SUPER ADMIN</p>
+              <p style={{ fontSize: 11, color: '#3a4050', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: "'Geist',sans-serif" }}>{user?.email}</p>
+            </div>
+          </div>
+        </div>
+        <button onClick={logout} style={{ width: '100%', padding: '9px', borderRadius: 10, cursor: 'pointer', fontSize: 12, fontWeight: 600, background: 'transparent', border: '1px solid #1e2433', color: '#3a4050', fontFamily: "'Geist',sans-serif", transition: 'all 0.15s' }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(248,113,113,0.06)'; e.currentTarget.style.color = '#f87171'; e.currentTarget.style.borderColor = 'rgba(248,113,113,0.2)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#3a4050'; e.currentTarget.style.borderColor = '#1e2433'; }}>
+          Sign out →
+        </button>
+      </div>
+    </aside>
+  );
+};
+
+/* ══════════════════════════════════════════
+   OVERVIEW
+══════════════════════════════════════════ */
+const Overview = ({ teams, tournaments, referees, setTab }) => {
+  const stats = [
+    { label: 'Total Teams',       value: teams.length,       icon: '🛡', color: '#38bdf8', tab: 'teams' },
+    { label: 'Tournaments',       value: tournaments.length, icon: '🏆', color: '#f0b429', tab: 'tournaments' },
+    { label: 'Active Referees',   value: referees.length,    icon: '⚖', color: '#34d399', tab: 'referees' },
+    { label: 'Matches Generated', value: tournaments.reduce((s, t) => s + (t.matches_count || 0), 0), icon: '⚽', color: '#f87171', tab: null },
+  ];
+  return (
+    <div>
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 32, color: '#fff', fontFamily: "'Instrument Serif',serif", fontStyle: 'italic', lineHeight: 1.1, marginBottom: 6 }}>Good evening, Admin.</h1>
+        <p style={{ fontSize: 13, color: '#3a4050', fontFamily: "'Geist',sans-serif" }}>Here's what's happening across your tournaments today.</p>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 24 }}>
+        {stats.map((s, i) => (
+          <div key={i} onClick={() => s.tab && setTab(s.tab)}
+            style={{ background: '#161a22', border: '1px solid #1e2433', borderRadius: 18, padding: '22px 24px', cursor: s.tab ? 'pointer' : 'default', transition: 'all 0.15s', position: 'relative', overflow: 'hidden' }}
+            onMouseEnter={e => { if (s.tab) { e.currentTarget.style.borderColor = s.color + '40'; e.currentTarget.style.background = '#1a1f2a'; } }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = '#1e2433'; e.currentTarget.style.background = '#161a22'; }}>
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, background: `linear-gradient(90deg,${s.color},transparent)` }} />
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+              <span style={{ fontSize: 24 }}>{s.icon}</span>
+              {s.tab && <span style={{ fontSize: 10, color: s.color, fontFamily: "'Geist',sans-serif", fontWeight: 600 }}>VIEW →</span>}
+            </div>
+            <p style={{ fontSize: 36, fontWeight: 700, color: '#fff', lineHeight: 1, fontFamily: "'Geist',sans-serif", marginBottom: 4 }}>{s.value}</p>
+            <p style={{ fontSize: 11, color: '#3a4050', fontFamily: "'Geist',sans-serif" }}>{s.label}</p>
+          </div>
+        ))}
+      </div>
+      {tournaments.length > 0 && (
+        <Card title="Recent Tournaments" subtitle="Latest activity">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {tournaments.slice(0, 5).map(t => {
+              const colors = { league: '#38bdf8', knockout: '#f87171', mixed: '#a78bfa' };
+              const c = colors[t.type] || '#64748b';
+              return (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: '#0e1117', borderRadius: 12, border: '1px solid #1a1f2e' }}>
+                  <div style={{ width: 6, height: 6, borderRadius: 99, background: c, flexShrink: 0 }} />
+                  <p style={{ flex: 1, fontSize: 13, fontWeight: 500, color: '#e2e8f0', fontFamily: "'Geist',sans-serif" }}>{t.name}</p>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: c + '15', color: c, fontFamily: "'Geist',sans-serif", textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t.type}</span>
+                  <span style={{ fontSize: 11, color: '#3a4050', fontFamily: "'Geist',sans-serif" }}>{t.teams_count} teams</span>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════
+   MAIN
+══════════════════════════════════════════ */
 const AdminDashboard = () => {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
-  
-  const [activeTab, setActiveTab] = useState('teams');
+
+  const [tab, setTab]             = useState('overview');
   const [tournaments, setTournaments] = useState([]);
-  const [teams, setTeams] = useState([]);
-  const [referees, setReferees] = useState([]);
-  const [loading, setLoading] = useState(false);
-  
-  const [showTeamForm, setShowTeamForm] = useState(false);
-  const [showTournamentForm, setShowTournamentForm] = useState(false);
-  const [showRefereeForm, setShowRefereeForm] = useState(false);
-  
-  // بيانات الفريق
-  const [teamData, setTeamData] = useState({ name: '', short_name: '', founded_date: '', colors: '' });
+  const [teams, setTeams]         = useState([]);
+  const [referees, setReferees]   = useState([]);
+  const [loading, setLoading]     = useState(false);
+  const [msg, setMsg]             = useState({ text: '', type: '' });
+  const [refMsg, setRefMsg]       = useState({ text: '', type: '' });
+
+  // create forms
+  const [showTeam,  setShowTeam]  = useState(false);
+  const [showTourn, setShowTourn] = useState(false);
+  const [showRef,   setShowRef]   = useState(false);
+
+  // edit modals
+  const [editTeam,  setEditTeam]  = useState(null); // team object
+  const [editTourn, setEditTourn] = useState(null); // tournament object
+  const [editRef,   setEditRef]   = useState(null); // referee object
+
+  // team create
+  const [teamData,    setTeamData]    = useState({ name: '', short_name: '', founded_date: '', colors: '' });
   const [managerData, setManagerData] = useState({ name: '', email: '' });
-  const [coachData, setCoachData] = useState({ name: '', email: '' });
-  const [teamLogo, setTeamLogo] = useState(null);
-  const [coachPhoto, setCoachPhoto] = useState(null); // ✅ صورة المدرب
+  const [coachData,   setCoachData]   = useState({ name: '', email: '' });
+  const [teamLogo,    setTeamLogo]    = useState(null);
+  const [coachPhoto,  setCoachPhoto]  = useState(null);
 
-  // بيانات البطولة
-  const [tData, setTData] = useState({ name: '', type: 'league', start_date: '', end_date: '' });
-  const [selectedTeamIds, setSelectedTeamIds] = useState([]);
-  const [tournamentOptions, setTournamentOptions] = useState({
-    group_stage_legs: 1, knockout_stage_legs: 1, num_groups: 4, teams_qualify_per_group: 2,
-  });
+  // team edit
+  const [editTeamData, setEditTeamData] = useState({ name: '', short_name: '', founded_date: '', colors: '' });
+  const [editTeamLogo, setEditTeamLogo] = useState(null);
 
-  const [refereeData, setRefereeData] = useState({ name: '', email: '', photo: null }); // ✅ صورة الحكم
-  const [message, setMessage] = useState({ text: '', type: '' });
-  const [refMessage, setRefMessage] = useState({ text: '', type: '' });
+  // tournament create
+  const [tData,    setTData]    = useState({ name: '', type: 'league', start_date: '', end_date: '' });
+  const [selTeams, setSelTeams] = useState([]);
+  const [tOpts,    setTOpts]    = useState({ group_stage_legs: 1, knockout_stage_legs: 1, num_groups: 4, teams_qualify_per_group: 2 });
+  const [tTrophy,  setTTrophy]  = useState(null);
 
-  useEffect(() => { fetchData(); }, []);
+  // tournament edit
+  const [editTData,   setEditTData]   = useState({ name: '', start_date: '', end_date: '' });
+  const [editTTrophy, setEditTTrophy] = useState(null);
+
+  // referee create
+  const [refData, setRefData] = useState({ name: '', email: '', photo: null });
+
+  // referee edit
+  const [editRefData,  setEditRefData]  = useState({ name: '', email: '' });
+  const [editRefPhoto, setEditRefPhoto] = useState(null);
+
+  useEffect(() => { injectFonts(); fetchData(); }, []);
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [tRes, tmRes, refRes] = await Promise.all([
-        api.get('/tournaments'),
-        api.get('/teams'),
-        api.get('/referees').catch(() => ({ data: [] }))
-      ]);
-      setTournaments(tRes.data);
-      setTeams(tmRes.data);
-      setReferees(refRes.data);
-    } catch (error) { console.error("Error:", error); } finally { setLoading(false); }
+      const [t, tm, r] = await Promise.all([api.get('/tournaments'), api.get('/teams'), api.get('/referees').catch(() => ({ data: [] }))]);
+      setTournaments(t.data); setTeams(tm.data); setReferees(r.data);
+    } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  const handleCreateTeam = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append('name', teamData.name);
-      formData.append('short_name', teamData.short_name || '');
-      formData.append('founded_date', teamData.founded_date || '');
-      formData.append('colors', teamData.colors || '');
-      formData.append('manager_name', managerData.name);
-      formData.append('manager_email', managerData.email);
-      formData.append('coach_name', coachData.name);
-      formData.append('coach_email', coachData.email);
-      if (teamLogo) formData.append('logo', teamLogo);
-      if (coachPhoto) formData.append('coach_photo', coachPhoto); // ✅
-      const res = await api.post('/teams', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setMessage({ text: `✅ ${res.data.message}`, type: 'success' });
-      setShowTeamForm(false); resetForms(); fetchData();
-    } catch (error) {
-      setMessage({ text: `❌ ${error.response?.data?.detail || 'فشل'}`, type: 'error' });
-    } finally { setLoading(false); setTimeout(() => setMessage({ text: '', type: '' }), 5000); }
-  };
+  const flash = (set, text, type = 'success', ms = 5000) => { set({ text, type }); setTimeout(() => set({ text: '', type: '' }), ms); };
 
-  const handleCreateTournament = async (e) => {
-    e.preventDefault();
-    if (selectedTeamIds.length < 2) {
-      setMessage({ text: '❌ اختر فريقين على الأقل', type: 'error' });
-      setTimeout(() => setMessage({ text: '', type: '' }), 4000);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await api.post('/tournaments', {
-        name: tData.name, type: tData.type,
-        start_date: tData.start_date, end_date: tData.end_date,
-        team_ids: selectedTeamIds,
-      });
-      await api.post(`/tournaments/${res.data.id}/generate-matches`, {
-        group_stage_legs: tournamentOptions.group_stage_legs,
-        knockout_stage_legs: tournamentOptions.knockout_stage_legs,
-        num_groups: tournamentOptions.num_groups,
-        teams_qualify_per_group: tournamentOptions.teams_qualify_per_group,
-      });
-      setMessage({ text: '✅ تم إنشاء البطولة وتوليد المباريات!', type: 'success' });
-      setShowTournamentForm(false); resetForms(); fetchData();
-      setTimeout(() => navigate(`/tournament/${res.data.id}`), 1500);
-    } catch (error) {
-      setMessage({ text: `❌ ${error.response?.data?.detail || 'فشل'}`, type: 'error' });
-    } finally { setLoading(false); setTimeout(() => setMessage({ text: '', type: '' }), 6000); }
-  };
-
-  // ✅ handleCreateReferee مع صورة
- const handleCreateReferee = async (e) => {
-  e.preventDefault();
-  setLoading(true);
-  try {
-    // ✅ إنشاء FormData لإرسال البيانات بشكل صحيح (يشمل الصورة إن وجدت)
-    const formData = new FormData();
-    formData.append('name', refereeData.name);
-    formData.append('email', refereeData.email);
-    
-    // إذا كان هناك حقل صورة في الفورم أضفه هنا، وإلا تجاهله
-    if (refereeData.photo) {
-      formData.append('photo', refereeData.photo);
-    }
-
-    // ✅ إرسال الطلب مع تحديد نوع المحتوى تلقائياً لـ FormData
-    await api.post('/referees', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-
-    setRefMessage({ text: '✅ تم إضافة الحكم وإرسال الدعوة بنجاح!', type: 'success' });
-    setShowRefereeForm(false); 
-    setRefereeData({ name: '', email: '', photo: null }); // تصفير البيانات
-    fetchData(); // تحديث القائمة
-    
-    setTimeout(() => setRefMessage({ text: '', type: '' }), 5000);
-  } catch (error) {
-    console.error("Referee Error:", error);
-    const msg = error.response?.data?.detail || "فشل الإضافة";
-    setRefMessage({ text: `❌ ${msg}`, type: 'error' });
-    
-    // 🔍 رسالة إضافية للتشخيص
-    if (msg.includes("Email failed")) {
-       alert("⚠️ تم إنشاء الحساب ولكن فشل إرسال الإيميل! تحقق من إعدادات السيرفر.");
-    }
-  } finally { 
-    setLoading(false); 
-  }
-};
-
-  const handleDeleteReferee = async (id, name) => {
-    if (!window.confirm(`⚠️ حذف الحكم "${name}"؟`)) return;
-    try {
-      await api.delete(`/referees/${id}`);
-      setRefMessage({ text: '✅ تم الحذف.', type: 'success' });
-      fetchData();
-      setTimeout(() => setRefMessage({ text: '', type: '' }), 3000);
-    } catch (error) {
-      setRefMessage({ text: `❌ فشل: ${error.response?.data?.detail}`, type: 'error' });
-    }
-  };
-
-  const handleDeleteTeam = async (id, name) => {
-    if (!window.confirm(`⚠️ حذف فريق "${name}"؟`)) return;
-    try {
-      await api.delete(`/teams/${id}`);
-      alert("✅ تم الحذف."); fetchData();
-    } catch (error) { alert(`❌ فشل: ${error.response?.data?.detail}`); }
-  };
-
-  const resetForms = () => {
-    setTeamData({ name: '', short_name: '', founded_date: '', colors: '' });
-    setManagerData({ name: '', email: '' }); setCoachData({ name: '', email: '' });
+  const resetCreate = () => {
+    setTeamData({ name:'', short_name:'', founded_date:'', colors:'' });
+    setManagerData({ name:'', email:'' }); setCoachData({ name:'', email:'' });
     setTeamLogo(null); setCoachPhoto(null);
-    setTData({ name: '', type: 'league', start_date: '', end_date: '' });
-    setTournamentOptions({ group_stage_legs: 1, knockout_stage_legs: 1, num_groups: 4, teams_qualify_per_group: 2 });
-    setSelectedTeamIds([]); setRefereeData({ name: '', email: '', photo: null });
+    setTData({ name:'', type:'league', start_date:'', end_date:'' });
+    setTOpts({ group_stage_legs:1, knockout_stage_legs:1, num_groups:4, teams_qualify_per_group:2 });
+    setSelTeams([]); setTTrophy(null);
+    setRefData({ name:'', email:'', photo:null });
   };
 
-  const toggleTeamSelection = (id) =>
-    setSelectedTeamIds(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
+  /* ── CREATE TEAM ── */
+  const createTeam = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      const fd = new FormData();
+      Object.entries({ ...teamData, manager_name: managerData.name, manager_email: managerData.email, coach_name: coachData.name, coach_email: coachData.email }).forEach(([k, v]) => fd.append(k, v || ''));
+      if (teamLogo)   fd.append('logo', teamLogo);
+      if (coachPhoto) fd.append('coach_photo', coachPhoto);
+      const res = await api.post('/teams', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      flash(setMsg, res.data.message);
+      setShowTeam(false); resetCreate(); fetchData();
+    } catch (err) { flash(setMsg, err.response?.data?.detail || 'Failed', 'error'); }
+    finally { setLoading(false); }
+  };
 
-  const getGenerationSummary = () => {
-    const n = selectedTeamIds.length;
-    if (n < 2) return null;
-    const { type } = tData;
-    const { group_stage_legs, knockout_stage_legs, num_groups, teams_qualify_per_group } = tournamentOptions;
-    if (type === 'league') {
-      const m = group_stage_legs === 2 ? n*(n-1) : (n*(n-1))/2;
-      return `${n} فرق — ${group_stage_legs===2?'ذهاب وإياب':'ذهاب فقط'} — ${Math.round(m)} مباراة`;
-    }
-    if (type === 'knockout') return `${n} فرق — ${Math.log2(n)} أدوار — ${knockout_stage_legs===2?'ذهاب وإياب':'مباراة واحدة'}`;
-    if (type === 'mixed') return `${n} فرق — ${num_groups} مجموعات — ${teams_qualify_per_group} متأهلين/مجموعة — الإقصاء: ${knockout_stage_legs===2?'ذهاب وإياب':'مباراة واحدة'}`;
+  /* ── EDIT TEAM ── */
+  const openEditTeam = (t) => {
+    setEditTeam(t);
+    setEditTeamData({ name: t.name, short_name: t.short_name || '', founded_date: t.founded_date || '', colors: t.colors || '' });
+    setEditTeamLogo(null);
+  };
+  const saveEditTeam = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      const fd = new FormData();
+      Object.entries(editTeamData).forEach(([k, v]) => fd.append(k, v || ''));
+      if (editTeamLogo) fd.append('logo', editTeamLogo);
+      await api.put(`/teams/${editTeam.id}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      flash(setMsg, 'Team updated successfully!');
+      setEditTeam(null); fetchData();
+    } catch (err) { flash(setMsg, err.response?.data?.detail || 'Failed', 'error'); }
+    finally { setLoading(false); }
+  };
+
+  /* ── CREATE TOURNAMENT ── */
+  const createTournament = async (e) => {
+    e.preventDefault();
+    if (selTeams.length < 2) { flash(setMsg, 'Select at least 2 teams', 'error', 4000); return; }
+    setLoading(true);
+    try {
+      const res = await api.post('/tournaments', { name: tData.name, type: tData.type, start_date: tData.start_date, end_date: tData.end_date, team_ids: selTeams });
+      await api.post(`/tournaments/${res.data.id}/generate-matches`, tOpts);
+      // upload trophy if provided
+      if (tTrophy) {
+        const fd = new FormData(); fd.append('trophy_image', tTrophy);
+        await api.patch(`/tournaments/${res.data.id}/trophy`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }).catch(() => {});
+      }
+      flash(setMsg, 'Tournament created & fixtures generated!');
+      setShowTourn(false); resetCreate(); fetchData();
+      setTimeout(() => navigate(`/tournament/${res.data.id}`), 1400);
+    } catch (err) { flash(setMsg, err.response?.data?.detail || 'Failed', 'error'); }
+    finally { setLoading(false); }
+  };
+
+  /* ── EDIT TOURNAMENT ── */
+  const openEditTourn = (t) => {
+    setEditTourn(t);
+    setEditTData({ name: t.name, start_date: t.start_date || '', end_date: t.end_date || '' });
+    setEditTTrophy(null);
+  };
+  const saveEditTourn = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      await api.put(`/tournaments/${editTourn.id}`, editTData);
+      if (editTTrophy) {
+        const fd = new FormData(); fd.append('trophy_image', editTTrophy);
+        await api.patch(`/tournaments/${editTourn.id}/trophy`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }).catch(() => {});
+      }
+      flash(setMsg, 'Tournament updated!');
+      setEditTourn(null); fetchData();
+    } catch (err) { flash(setMsg, err.response?.data?.detail || 'Failed', 'error'); }
+    finally { setLoading(false); }
+  };
+
+  /* ── CREATE REFEREE ── */
+  const createReferee = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append('name', refData.name); fd.append('email', refData.email);
+      if (refData.photo) fd.append('photo', refData.photo);
+      await api.post('/referees', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      flash(setRefMsg, 'Referee added & invitation sent!');
+      setShowRef(false); setRefData({ name:'', email:'', photo:null }); fetchData();
+    } catch (err) {
+      const d = err.response?.data?.detail || 'Failed';
+      flash(setRefMsg, d, 'error');
+      if (d.includes('Email')) alert('Account created but email failed.');
+    } finally { setLoading(false); }
+  };
+
+  /* ── EDIT REFEREE ── */
+  const openEditRef = (r) => {
+    setEditRef(r);
+    setEditRefData({ name: r.name, email: r.email });
+    setEditRefPhoto(null);
+  };
+  const saveEditRef = async (e) => {
+    e.preventDefault(); setLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append('name', editRefData.name); fd.append('email', editRefData.email);
+      if (editRefPhoto) fd.append('photo', editRefPhoto);
+      await api.put(`/referees/${editRef.id}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      flash(setRefMsg, 'Referee updated!');
+      setEditRef(null); fetchData();
+    } catch (err) { flash(setRefMsg, err.response?.data?.detail || 'Failed', 'error'); }
+    finally { setLoading(false); }
+  };
+
+  const deleteTeam    = async (id, name) => { if (!confirm(`Delete team "${name}"?`)) return; try { await api.delete(`/teams/${id}`); fetchData(); } catch (err) { alert(err.response?.data?.detail); } };
+  const deleteReferee = async (id, name) => { if (!confirm(`Delete referee "${name}"?`)) return; try { await api.delete(`/referees/${id}`); flash(setRefMsg, 'Deleted.'); fetchData(); } catch (err) { flash(setRefMsg, err.response?.data?.detail, 'error'); } };
+  const toggleTeam    = (id) => setSelTeams(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
+
+  const summary = (() => {
+    const n = selTeams.length; if (n < 2) return null;
+    if (tData.type === 'league') { const m = tOpts.group_stage_legs === 2 ? n*(n-1) : (n*(n-1))/2; return `${n} teams · ${tOpts.group_stage_legs === 2 ? 'Home & Away' : 'Single leg'} · ${Math.round(m)} matches`; }
+    if (tData.type === 'knockout') return `${n} teams · ${Math.log2(n)} rounds`;
+    if (tData.type === 'mixed') return `${n} teams · ${tOpts.num_groups} groups · ${tOpts.teams_qualify_per_group} qualify/group`;
     return null;
-  };
+  })();
 
-  const summary = getGenerationSummary();
+  const PageTitle = ({ icon, title, action }) => (
+    <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 28 }}>
+      <div>
+        <p style={{ fontSize: 11, color: '#3a4050', fontFamily: "'Geist',sans-serif", marginBottom: 4, letterSpacing: '1px' }}>{icon} {title.toUpperCase()}</p>
+        <h2 style={{ fontSize: 28, color: '#fff', fontFamily: "'Instrument Serif',serif", fontStyle: 'italic', lineHeight: 1 }}>{title}</h2>
+      </div>
+      {action}
+    </div>
+  );
+  const TRow = ({ cells }) => (
+    <tr style={{ borderBottom: '1px solid #1a1f2e', transition: 'background 0.1s' }}
+      onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.015)'}
+      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+      {cells.map((cell, i) => <td key={i} style={{ padding: '13px 16px', verticalAlign: 'middle' }}>{cell}</td>)}
+    </tr>
+  );
+  const THead = ({ cols }) => (
+    <thead>
+      <tr style={{ borderBottom: '1px solid #1e2433' }}>
+        {cols.map(c => <th key={c} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 10, fontWeight: 600, color: '#2a3040', letterSpacing: '2px', fontFamily: "'Geist',sans-serif" }}>{c.toUpperCase()}</th>)}
+      </tr>
+    </thead>
+  );
 
   return (
-    <div className="container mx-auto p-6 bg-gray-50 min-h-screen">
-      {/* Header */}
-      <div className="flex justify-between items-center mb-8 bg-white p-6 rounded-lg shadow-md">
-        <div>
-          <h2 className="text-3xl font-bold text-gray-800">لوحة المسؤول العام</h2>
-          <p className="text-gray-500 mt-1">مرحباً، {user?.email}</p>
-        </div>
-        <button onClick={logout} className="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600">خروج</button>
-      </div>
+    <div style={{ background: '#0b0d11', minHeight: '100vh', fontFamily: "'Geist',sans-serif", color: '#e2e8f0', direction: 'ltr' }}>
+      <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', background: 'radial-gradient(ellipse 70% 40% at 30% 0%, rgba(240,180,41,0.04), transparent)' }} />
+      <Sidebar tab={tab} setTab={setTab} counts={{ teams: teams.length, tournaments: tournaments.length, referees: referees.length }} user={user} logout={logout} />
 
-      {message.text && <div className={`p-4 mb-6 rounded-lg font-bold ${message.type==='success'?'bg-green-100 text-green-800 border border-green-300':'bg-red-100 text-red-800 border border-red-300'}`}>{message.text}</div>}
-      {refMessage.text && <div className={`p-4 mb-6 rounded-lg font-bold ${refMessage.type==='success'?'bg-green-100 text-green-800':'bg-red-100 text-red-800'}`}>{refMessage.text}</div>}
+      <main style={{ marginLeft: 240, padding: '40px 48px', maxWidth: 900, minHeight: '100vh' }}>
+        <Toaster msg={msg} />
 
-      {/* Tabs */}
-      <div className="flex gap-4 mb-6 border-b border-gray-300 overflow-x-auto">
-        {[{id:'teams',label:'🛡️ الفرق'},{id:'tournaments',label:'🏆 البطولات'},{id:'referees',label:'⚖️ الحكام'}].map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-            className={`pb-3 px-6 text-lg font-semibold whitespace-nowrap transition-all ${activeTab===tab.id?'border-b-4 border-blue-600 text-blue-600':'text-gray-500 hover:text-gray-700'}`}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
+        {/* ══ OVERVIEW ══ */}
+        {tab === 'overview' && <Overview teams={teams} tournaments={tournaments} referees={referees} setTab={setTab} />}
 
-      <div className="bg-white p-6 rounded-lg shadow-md min-h-[400px]">
-
-        {/* ══════════════ تبويب الفرق ══════════════ */}
-        {activeTab === 'teams' && (
+        {/* ══ TEAMS ══ */}
+        {tab === 'teams' && (
           <div>
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-700">قائمة الفرق</h3>
-              <button onClick={() => setShowTeamForm(!showTeamForm)} className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
-                {showTeamForm ? 'إخفاء' : '+ إضافة فريق'}
-              </button>
-            </div>
-            {showTeamForm && (
-              <form onSubmit={handleCreateTeam} className="bg-blue-50 p-6 rounded-lg mb-6 space-y-4 border border-blue-200">
-                <div className="grid grid-cols-2 gap-4">
-                  <input placeholder="اسم الفريق" required className="border p-2 rounded w-full" value={teamData.name} onChange={e => setTeamData({...teamData, name: e.target.value})} />
-                  <input placeholder="الاختصار" className="border p-2 rounded w-full" value={teamData.short_name} onChange={e => setTeamData({...teamData, short_name: e.target.value})} />
-                  <input type="date" className="border p-2 rounded w-full" value={teamData.founded_date} onChange={e => setTeamData({...teamData, founded_date: e.target.value})} />
-                  <input placeholder="الألوان" className="border p-2 rounded w-full" value={teamData.colors} onChange={e => setTeamData({...teamData, colors: e.target.value})} />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">🖼️ شعار الفريق</label>
-                  <input type="file" accept="image/*" onChange={e => setTeamLogo(e.target.files[0])} className="block w-full text-sm text-gray-500 border rounded p-1.5 bg-white" />
-                </div>
-                <div className="border-t pt-4 space-y-3">
-                  <p className="text-sm font-bold text-gray-600">👤 بيانات المسؤول</p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <input placeholder="اسم المسؤول" required className="border p-2 rounded" value={managerData.name} onChange={e => setManagerData({...managerData, name: e.target.value})} />
-                    <input type="email" placeholder="إيميل المسؤول" required className="border p-2 rounded" value={managerData.email} onChange={e => setManagerData({...managerData, email: e.target.value})} />
-                  </div>
-                </div>
-                <div className="border-t pt-4 space-y-3">
-                  <p className="text-sm font-bold text-gray-600">🎽 بيانات المدرب</p>
-                  <div className="grid grid-cols-2 gap-4">
-                    <input placeholder="اسم المدرب" required className="border p-2 rounded" value={coachData.name} onChange={e => setCoachData({...coachData, name: e.target.value})} />
-                    <input type="email" placeholder="إيميل المدرب" required className="border p-2 rounded" value={coachData.email} onChange={e => setCoachData({...coachData, email: e.target.value})} />
-                  </div>
-                  {/* ✅ صورة المدرب */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">📸 صورة المدرب <span className="text-gray-400 font-normal">(اختياري)</span></label>
-                    <div className="flex items-center gap-3">
-                      <input type="file" accept="image/*" onChange={e => setCoachPhoto(e.target.files[0])} className="flex-1 text-sm text-gray-500 border rounded p-1.5 bg-white" />
-                      {coachPhoto && (
-                        <img src={URL.createObjectURL(coachPhoto)} alt="preview" className="h-10 w-10 rounded-full object-cover border-2 border-blue-300" />
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <button type="submit" disabled={loading} className="bg-blue-600 text-white px-4 py-2 rounded w-full hover:bg-blue-700 font-bold">
-                  {loading ? 'جاري الإنشاء...' : 'إنشاء الفريق'}
-                </button>
-              </form>
-            )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-right">
-                <thead className="bg-gray-100">
-                  <tr><th className="p-3">#</th><th className="p-3">الشعار</th><th className="p-3">الفريق</th><th className="p-3">الاختصار</th><th className="p-3">الألوان</th><th className="p-3">إجراءات</th></tr>
-                </thead>
-                <tbody>
-                  {teams.map((t, i) => (
-                    <tr key={t.id} className="border-b hover:bg-gray-50">
-                      <td className="p-3">{i+1}</td>
-                      <td className="p-3">{t.logo ? <img src={`http://127.0.0.1:8000${t.logo}`} alt={t.name} className="h-10 w-10 object-cover rounded-full border" onError={e=>e.target.src="https://via.placeholder.com/40"} /> : <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-400">🛡️</div>}</td>
-                      <td className="p-3 font-bold">{t.name}</td>
-                      <td className="p-3">{t.short_name}</td>
-                      <td className="p-3">{t.colors}</td>
-                      <td className="p-3"><button onClick={() => handleDeleteTeam(t.id, t.name)} className="text-red-600 hover:text-red-800 font-bold text-sm bg-red-50 px-3 py-1 rounded">🗑️ حذف</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+            <PageTitle icon="🛡" title="Teams" action={<Btn c="gold" onClick={() => setShowTeam(!showTeam)}>{showTeam ? '✕  Close' : '+  New Team'}</Btn>} />
 
-        {/* ══════════════ تبويب البطولات ══════════════ */}
-        {activeTab === 'tournaments' && (
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-700">البطولات</h3>
-              <button onClick={() => setShowTournamentForm(!showTournamentForm)} className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700">
-                {showTournamentForm ? 'إخفاء' : '+ إضافة بطولة'}
-              </button>
-            </div>
-            {showTournamentForm && (
-              <form onSubmit={handleCreateTournament} className="bg-green-50 p-6 rounded-lg mb-6 space-y-4 border border-green-200">
-                <input placeholder="اسم البطولة" required className="border p-2 rounded w-full focus:border-green-500 outline-none" value={tData.name} onChange={e => setTData({...tData, name: e.target.value})} />
-                <div className="grid grid-cols-2 gap-4">
-                  <div><label className="block text-xs text-gray-500 mb-1">تاريخ البداية</label><input type="date" required className="border p-2 rounded w-full" value={tData.start_date} onChange={e => setTData({...tData, start_date: e.target.value})} /></div>
-                  <div><label className="block text-xs text-gray-500 mb-1">تاريخ النهاية</label><input type="date" required className="border p-2 rounded w-full" value={tData.end_date} onChange={e => setTData({...tData, end_date: e.target.value})} /></div>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-gray-700 mb-2">نوع البطولة</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {[{value:'league',label:'دوري',icon:'📊',desc:'كل فريق يلعب مع الباقين'},{value:'knockout',label:'خروج مغلوب',icon:'⚡',desc:'الخاسر يخرج مباشرة'},{value:'mixed',label:'مختلط',icon:'🌟',desc:'مجموعات + إقصاء'}].map(opt => (
-                      <button key={opt.value} type="button" onClick={() => setTData({...tData, type: opt.value})}
-                        className={`p-3 rounded-lg border-2 text-center transition-all ${tData.type===opt.value?'border-green-500 bg-green-100 text-green-800':'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
-                        <div className="text-2xl mb-1">{opt.icon}</div>
-                        <div className="font-bold text-sm">{opt.label}</div>
-                        <div className="text-xs text-gray-400 mt-0.5">{opt.desc}</div>
-                      </button>
+            {showTeam && (
+              <Card title="Register New Team" subtitle="Invitations will be sent automatically">
+                <form onSubmit={createTeam}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+                    <div><Lbl>Team Name *</Lbl><Inp placeholder="FC Barcelona" required value={teamData.name} onChange={e=>setTeamData({...teamData,name:e.target.value})} /></div>
+                    <div><Lbl>Short Name</Lbl><Inp placeholder="FCB" value={teamData.short_name} onChange={e=>setTeamData({...teamData,short_name:e.target.value})} /></div>
+                    <div><Lbl>Founded Date</Lbl><Inp type="date" value={teamData.founded_date} onChange={e=>setTeamData({...teamData,founded_date:e.target.value})} /></div>
+                    <div><Lbl>Kit Colors</Lbl><Inp placeholder="Red & Blue" value={teamData.colors} onChange={e=>setTeamData({...teamData,colors:e.target.value})} /></div>
+                  </div>
+                  <div style={{ marginBottom: 20 }}><FileInput label="Team Crest" value={teamLogo} onChange={e=>setTeamLogo(e.target.files[0])} preview={teamLogo && URL.createObjectURL(teamLogo)} /></div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, paddingTop: 20, borderTop: '1px solid #1a1f2e' }}>
+                    {[{ label: 'Manager', color: '#38bdf8', data: managerData, set: setManagerData, showPhoto: false },
+                      { label: 'Head Coach', color: '#34d399', data: coachData, set: setCoachData, showPhoto: true }].map((section, i) => (
+                      <div key={i}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                          <div style={{ width: 3, height: 14, borderRadius: 99, background: section.color }} />
+                          <span style={{ fontSize: 11, fontWeight: 700, color: section.color, letterSpacing: '1.5px' }}>{section.label.toUpperCase()}</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <div><Lbl>Full Name *</Lbl><Inp placeholder="Full name" required value={section.data.name} onChange={e=>section.set({...section.data,name:e.target.value})} /></div>
+                          <div><Lbl>Email *</Lbl><Inp type="email" placeholder="email@club.com" required value={section.data.email} onChange={e=>section.set({...section.data,email:e.target.value})} /></div>
+                          {section.showPhoto && <FileInput label="Photo (optional)" value={coachPhoto} onChange={e=>setCoachPhoto(e.target.files[0])} preview={coachPhoto && URL.createObjectURL(coachPhoto)} />}
+                        </div>
+                      </div>
                     ))}
                   </div>
-                </div>
-                {tData.type === 'league' && (
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                    <h4 className="font-bold text-blue-800 mb-3">📊 إعدادات الدوري</h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[{value:1,label:'ذهاب فقط',icon:'➡️',desc:'مباراة واحدة'},{value:2,label:'ذهاب وإياب',icon:'🔄',desc:'مبارتان'}].map(opt => (
-                        <button key={opt.value} type="button" onClick={() => setTournamentOptions({...tournamentOptions, group_stage_legs: opt.value})}
-                          className={`p-3 rounded-lg border-2 text-center transition-all ${tournamentOptions.group_stage_legs===opt.value?'border-blue-500 bg-blue-100 text-blue-800':'border-gray-200 bg-white text-gray-600'}`}>
-                          <div className="text-xl mb-1">{opt.icon}</div><div className="font-bold text-sm">{opt.label}</div><div className="text-xs text-gray-400">{opt.desc}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {tData.type === 'knockout' && (
-                  <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-                    <h4 className="font-bold text-red-800 mb-3">⚡ إعدادات خروج المغلوب</h4>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[{value:1,label:'مباراة واحدة',icon:'⚡',desc:'الفائز مباشرة'},{value:2,label:'ذهاب وإياب',icon:'🔄',desc:'النهائي مباراة واحدة'}].map(opt => (
-                        <button key={opt.value} type="button" onClick={() => setTournamentOptions({...tournamentOptions, knockout_stage_legs: opt.value})}
-                          className={`p-3 rounded-lg border-2 text-center transition-all ${tournamentOptions.knockout_stage_legs===opt.value?'border-red-500 bg-red-100 text-red-800':'border-gray-200 bg-white text-gray-600'}`}>
-                          <div className="text-xl mb-1">{opt.icon}</div><div className="font-bold text-sm">{opt.label}</div><div className="text-xs text-gray-400">{opt.desc}</div>
-                        </button>
-                      ))}
-                    </div>
-                    <p className="text-xs text-red-500 mt-2">⚠️ عدد الفرق يجب أن يكون قوة لـ 2</p>
-                  </div>
-                )}
-                {tData.type === 'mixed' && (
-                  <div className="space-y-3">
-                    <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                      <h4 className="font-bold text-blue-800 mb-3">📋 المرحلة 1: المجموعات</h4>
-                      <div className="grid grid-cols-3 gap-3 mb-3">
-                        <div><label className="block text-xs font-bold text-gray-600 mb-1">نظام المجموعات</label>
-                          <select className="w-full border p-2 rounded bg-white text-sm" value={tournamentOptions.group_stage_legs} onChange={e => setTournamentOptions({...tournamentOptions, group_stage_legs: parseInt(e.target.value)})}>
-                            <option value="1">مباراة واحدة</option><option value="2">ذهاب وإياب</option>
-                          </select></div>
-                        <div><label className="block text-xs font-bold text-gray-600 mb-1">عدد المجموعات</label>
-                          <select className="w-full border p-2 rounded bg-white text-sm" value={tournamentOptions.num_groups} onChange={e => setTournamentOptions({...tournamentOptions, num_groups: parseInt(e.target.value)})}>
-                            <option value="2">مجموعتين</option><option value="4">4 مجموعات</option><option value="8">8 مجموعات</option>
-                          </select></div>
-                        <div><label className="block text-xs font-bold text-gray-600 mb-1">متأهلون / مجموعة</label>
-                          <select className="w-full border p-2 rounded bg-white text-sm" value={tournamentOptions.teams_qualify_per_group} onChange={e => setTournamentOptions({...tournamentOptions, teams_qualify_per_group: parseInt(e.target.value)})}>
-                            <option value="1">الأول فقط</option><option value="2">الأول والثاني</option><option value="3">الأوائل الثلاثة</option>
-                          </select></div>
-                      </div>
-                      <p className="text-xs text-blue-600">إجمالي المتأهلين: <strong>{tournamentOptions.num_groups * tournamentOptions.teams_qualify_per_group} فريق</strong></p>
-                    </div>
-                    <div className="bg-red-50 p-4 rounded-lg border border-red-200">
-                      <h4 className="font-bold text-red-800 mb-3">🏆 المرحلة 2: الأدوار الإقصائية</h4>
-                      <div className="grid grid-cols-2 gap-3">
-                        {[{value:1,label:'مباراة واحدة',icon:'⚡',desc:'الفائز مباشرة'},{value:2,label:'ذهاب وإياب',icon:'🔄',desc:'النهائي واحدة'}].map(opt => (
-                          <button key={opt.value} type="button" onClick={() => setTournamentOptions({...tournamentOptions, knockout_stage_legs: opt.value})}
-                            className={`p-3 rounded-lg border-2 text-center transition-all ${tournamentOptions.knockout_stage_legs===opt.value?'border-red-500 bg-red-100 text-red-800':'border-gray-200 bg-white text-gray-600'}`}>
-                            <div className="text-xl mb-1">{opt.icon}</div><div className="font-bold text-sm">{opt.label}</div><div className="text-xs text-gray-400">{opt.desc}</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <label className="block text-sm font-bold text-gray-700 mb-2">الفرق المشاركة <span className="text-green-600 font-normal">({selectedTeamIds.length} مختارين)</span></label>
-                  <div className="max-h-40 overflow-y-auto border rounded-lg bg-white divide-y">
-                    {teams.map(t => (
-                      <label key={t.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 cursor-pointer">
-                        <input type="checkbox" onChange={() => toggleTeamSelection(t.id)} checked={selectedTeamIds.includes(t.id)} className="rounded text-green-600" />
-                        <span className="text-sm">{t.name}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                {summary && <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800 font-medium">📋 سيتم توليد: <strong>{summary}</strong></div>}
-                <button type="submit" disabled={loading || selectedTeamIds.length < 2}
-                  className={`w-full py-3 rounded-lg font-bold text-white text-lg shadow-md transition-all ${loading || selectedTeamIds.length < 2 ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'}`}>
-                  {loading ? '⏳ جاري الإنشاء...' : '✅ إنشاء البطولة وتوليد المباريات'}
-                </button>
-              </form>
+                  <div style={{ marginTop: 20 }}><Btn type="submit" c="gold" full disabled={loading}>{loading ? '⏳  Processing...' : '✓  Create Team & Send Invitations'}</Btn></div>
+                </form>
+              </Card>
             )}
-            <table className="w-full text-right">
-              <thead className="bg-gray-100"><tr><th className="p-3">#</th><th className="p-3">البطولة</th><th className="p-3">النوع</th><th className="p-3">الفرق</th></tr></thead>
-              <tbody>
-                {tournaments.map((t, i) => (
-                  <tr key={t.id} className="border-b hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/tournament/${t.id}`)}>
-                    <td className="p-3">{i+1}</td>
-                    <td className="p-3 font-bold text-blue-600 hover:underline">{t.name}</td>
-                    <td className="p-3"><span className={`px-2 py-1 rounded text-xs font-bold ${t.type==='mixed'?'bg-purple-100 text-purple-700':t.type==='knockout'?'bg-red-100 text-red-700':'bg-blue-100 text-blue-700'}`}>{t.type==='mixed'?'🌟 مختلط':t.type==='knockout'?'⚡ خروج مغلوب':'📊 دوري'}</span></td>
-                    <td className="p-3">{t.teams_count}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
 
-        {/* ══════════════ تبويب الحكام ══════════════ */}
-        {activeTab === 'referees' && (
-          <div>
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-700">قائمة الحكام</h3>
-              <button onClick={() => setShowRefereeForm(!showRefereeForm)} className="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700">
-                {showRefereeForm ? 'إخفاء' : '+ إضافة حكم'}
-              </button>
-            </div>
-            {showRefereeForm && (
-              <form onSubmit={handleCreateReferee} className="bg-purple-50 p-6 rounded-lg mb-6 space-y-4 max-w-lg border border-purple-200">
-                <input placeholder="اسم الحكم" required className="border p-2 rounded w-full" value={refereeData.name} onChange={e => setRefereeData({...refereeData, name: e.target.value})} />
-                <input type="email" placeholder="الإيميل" required className="border p-2 rounded w-full" value={refereeData.email} onChange={e => setRefereeData({...refereeData, email: e.target.value})} />
-                {/* ✅ صورة الحكم */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">📸 صورة الحكم <span className="text-gray-400 font-normal">(اختياري)</span></label>
-                  <div className="flex items-center gap-3">
-                    <input type="file" accept="image/*" onChange={e => setRefereeData({...refereeData, photo: e.target.files[0]})} className="flex-1 text-sm text-gray-500 border rounded p-1.5 bg-white" />
-                    {refereeData.photo && (
-                      <img src={URL.createObjectURL(refereeData.photo)} alt="preview" className="h-10 w-10 rounded-full object-cover border-2 border-purple-300" />
-                    )}
-                  </div>
-                </div>
-                <button type="submit" className="bg-purple-600 text-white px-4 py-2 rounded w-full font-bold hover:bg-purple-700">إرسال دعوة</button>
-              </form>
-            )}
-            <div className="overflow-x-auto">
-              <table className="w-full text-right">
-                <thead className="bg-gray-100">
-                  <tr><th className="p-3">#</th><th className="p-3">الصورة</th><th className="p-3">الاسم</th><th className="p-3">الإيميل</th><th className="p-3">إجراءات</th></tr>
-                </thead>
+            <div style={{ background: '#161a22', border: '1px solid #1e2433', borderRadius: 20, overflow: 'hidden' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <THead cols={['#', 'Crest', 'Team', 'Code', 'Colors', '']} />
                 <tbody>
-                  {referees.length === 0
-                    ? <tr><td colSpan="5" className="p-4 text-center text-gray-500">لا يوجد حكام</td></tr>
-                    : referees.map((ref, i) => (
-                      <tr key={ref.id} className="border-b hover:bg-gray-50">
-                        <td className="p-3">{i+1}</td>
-                        <td className="p-3">
-                          {ref.photo
-                            ? <img src={`http://127.0.0.1:8000${ref.photo}`} alt={ref.name} className="h-10 w-10 object-cover rounded-full border-2 border-purple-200" />
-                            : <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center text-xl">⚖️</div>
-                          }
-                        </td>
-                        <td className="p-3 font-bold">{ref.name}</td>
-                        <td className="p-3 text-gray-600">{ref.email}</td>
-                        <td className="p-3"><button onClick={() => handleDeleteReferee(ref.id, ref.name)} className="text-red-600 hover:text-red-800 font-bold text-sm bg-red-50 px-3 py-1 rounded">🗑️ حذف</button></td>
-                      </tr>
+                  {teams.length === 0
+                    ? <tr><td colSpan="6" style={{ padding: '48px', textAlign: 'center', color: '#2a3040', fontSize: 13 }}>No teams registered yet</td></tr>
+                    : teams.map((t, i) => (
+                      <TRow key={t.id} cells={[
+                        <span style={{ color: '#2a3040', fontSize: 11, fontWeight: 700 }}>{String(i+1).padStart(2,'0')}</span>,
+                        t.logo
+                          ? <img src={`${BASE}${t.logo}`} style={{ width: 36, height: 36, borderRadius: 9, objectFit: 'cover', border: '1px solid #1e2433' }} onError={e=>e.target.style.display='none'} />
+                          : <div style={{ width: 36, height: 36, borderRadius: 9, background: '#0e1117', border: '1px solid #1e2433', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🛡</div>,
+                        <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{t.name}</span>,
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 99, background: 'rgba(56,189,248,0.08)', color: '#38bdf8', border: '1px solid rgba(56,189,248,0.15)' }}>{t.short_name || '—'}</span>,
+                        <span style={{ fontSize: 12, color: '#3a4050' }}>{t.colors || '—'}</span>,
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <Btn c="amber" sm onClick={() => openEditTeam(t)}>Edit</Btn>
+                          <Btn c="rose"  sm onClick={() => deleteTeam(t.id, t.name)}>Delete</Btn>
+                        </div>,
+                      ]} />
                     ))
                   }
                 </tbody>
@@ -467,7 +527,250 @@ const AdminDashboard = () => {
             </div>
           </div>
         )}
-      </div>
+
+        {/* ══ TOURNAMENTS ══ */}
+        {tab === 'tournaments' && (
+          <div>
+            <PageTitle icon="🏆" title="Tournaments" action={<Btn c="emerald" onClick={() => setShowTourn(!showTourn)}>{showTourn ? '✕  Close' : '+  New Tournament'}</Btn>} />
+
+            {showTourn && (
+              <Card title="Create Tournament" subtitle="Configure format and generate fixtures">
+                <form onSubmit={createTournament}>
+                  <div style={{ marginBottom: 14 }}><Lbl>Tournament Name *</Lbl><Inp placeholder="Champions League 2025" required value={tData.name} onChange={e=>setTData({...tData,name:e.target.value})} /></div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 14 }}>
+                    <div><Lbl>Start Date *</Lbl><Inp type="date" required value={tData.start_date} onChange={e=>setTData({...tData,start_date:e.target.value})} /></div>
+                    <div><Lbl>End Date *</Lbl><Inp type="date" required value={tData.end_date} onChange={e=>setTData({...tData,end_date:e.target.value})} /></div>
+                  </div>
+                  <div style={{ marginBottom: 20 }}><FileInput label="Trophy / Cup Image (optional)" value={tTrophy} onChange={e=>setTTrophy(e.target.files[0])} preview={tTrophy && URL.createObjectURL(tTrophy)} /></div>
+
+                  <Lbl>Format</Lbl>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, marginBottom: 20 }}>
+                    <FmtBtn icon="📊" title="League"   desc="Round robin — all vs all"   active={tData.type==='league'}   onClick={()=>setTData({...tData,type:'league'})} />
+                    <FmtBtn icon="⚡" title="Knockout" desc="Elimination bracket"         active={tData.type==='knockout'} onClick={()=>setTData({...tData,type:'knockout'})} />
+                    <FmtBtn icon="🌟" title="Mixed"    desc="Groups + knockout"           active={tData.type==='mixed'}    onClick={()=>setTData({...tData,type:'mixed'})} />
+                  </div>
+
+                  {tData.type === 'league' && (
+                    <div style={{ background: 'rgba(240,180,41,0.04)', border: '1px solid rgba(240,180,41,0.12)', borderRadius: 14, padding: 16, marginBottom: 16 }}>
+                      <Lbl>League Format</Lbl>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {[{v:1,l:'Single Leg',d:'One match per pair'},{v:2,l:'Home & Away',d:'Two matches per pair'}].map(o=>(
+                          <button key={o.v} type="button" onClick={()=>setTOpts({...tOpts,group_stage_legs:o.v})}
+                            style={{ background:tOpts.group_stage_legs===o.v?'rgba(240,180,41,0.1)':'rgba(255,255,255,0.02)', border:`1px solid ${tOpts.group_stage_legs===o.v?'rgba(240,180,41,0.4)':'#1e2433'}`, borderRadius:12, padding:'12px 14px', textAlign:'left', cursor:'pointer', transition:'all 0.15s' }}>
+                            <p style={{ fontSize:13, fontWeight:600, color:tOpts.group_stage_legs===o.v?'#f0b429':'#e2e8f0', marginBottom:2, fontFamily:"'Geist',sans-serif" }}>{o.l}</p>
+                            <p style={{ fontSize:11, color:'#3a4050', fontFamily:"'Geist',sans-serif" }}>{o.d}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {tData.type === 'knockout' && (
+                    <div style={{ background: 'rgba(248,113,113,0.04)', border: '1px solid rgba(248,113,113,0.12)', borderRadius: 14, padding: 16, marginBottom: 16 }}>
+                      <Lbl>Knockout Format</Lbl>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {[{v:1,l:'Single Match',d:'Winner advances directly'},{v:2,l:'Two Legs',d:'Aggregate — final is 1 match'}].map(o=>(
+                          <button key={o.v} type="button" onClick={()=>setTOpts({...tOpts,knockout_stage_legs:o.v})}
+                            style={{ background:tOpts.knockout_stage_legs===o.v?'rgba(248,113,113,0.1)':'rgba(255,255,255,0.02)', border:`1px solid ${tOpts.knockout_stage_legs===o.v?'rgba(248,113,113,0.35)':'#1e2433'}`, borderRadius:12, padding:'12px 14px', textAlign:'left', cursor:'pointer', transition:'all 0.15s' }}>
+                            <p style={{ fontSize:13, fontWeight:600, color:tOpts.knockout_stage_legs===o.v?'#f87171':'#e2e8f0', marginBottom:2, fontFamily:"'Geist',sans-serif" }}>{o.l}</p>
+                            <p style={{ fontSize:11, color:'#3a4050', fontFamily:"'Geist',sans-serif" }}>{o.d}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {tData.type === 'mixed' && (
+                    <div style={{ display:'flex', flexDirection:'column', gap:10, marginBottom:16 }}>
+                      <div style={{ background:'rgba(240,180,41,0.04)', border:'1px solid rgba(240,180,41,0.1)', borderRadius:14, padding:16 }}>
+                        <Lbl>Group Stage</Lbl>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+                          <div><Lbl>Format</Lbl><Sel value={tOpts.group_stage_legs} onChange={e=>setTOpts({...tOpts,group_stage_legs:parseInt(e.target.value)})}><option value="1">Single leg</option><option value="2">Home & Away</option></Sel></div>
+                          <div><Lbl>Groups</Lbl><Sel value={tOpts.num_groups} onChange={e=>setTOpts({...tOpts,num_groups:parseInt(e.target.value)})}><option value="2">2</option><option value="4">4</option><option value="8">8</option></Sel></div>
+                          <div><Lbl>Qualify/group</Lbl><Sel value={tOpts.teams_qualify_per_group} onChange={e=>setTOpts({...tOpts,teams_qualify_per_group:parseInt(e.target.value)})}><option value="1">Top 1</option><option value="2">Top 2</option><option value="3">Top 3</option></Sel></div>
+                        </div>
+                      </div>
+                      <div style={{ background:'rgba(248,113,113,0.04)', border:'1px solid rgba(248,113,113,0.1)', borderRadius:14, padding:16 }}>
+                        <Lbl>Knockout Stage</Lbl>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                          {[{v:1,l:'Single Match',d:'Direct elimination'},{v:2,l:'Two Legs',d:'Aggregate scoring'}].map(o=>(
+                            <button key={o.v} type="button" onClick={()=>setTOpts({...tOpts,knockout_stage_legs:o.v})}
+                              style={{ background:tOpts.knockout_stage_legs===o.v?'rgba(248,113,113,0.1)':'rgba(255,255,255,0.02)', border:`1px solid ${tOpts.knockout_stage_legs===o.v?'rgba(248,113,113,0.35)':'#1e2433'}`, borderRadius:12, padding:'12px 14px', textAlign:'left', cursor:'pointer', transition:'all 0.15s' }}>
+                              <p style={{ fontSize:13, fontWeight:600, color:tOpts.knockout_stage_legs===o.v?'#f87171':'#e2e8f0', fontFamily:"'Geist',sans-serif" }}>{o.l}</p>
+                              <p style={{ fontSize:11, color:'#3a4050', fontFamily:"'Geist',sans-serif" }}>{o.d}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ marginBottom: 16 }}>
+                    <Lbl>Select Teams <span style={{color:'#f0b429'}}>({selTeams.length} selected)</span></Lbl>
+                    <div style={{ border:'1px solid #1e2433', borderRadius:14, overflow:'hidden', maxHeight:180, overflowY:'auto', scrollbarWidth:'thin', scrollbarColor:'#1e2433 transparent' }}>
+                      {teams.map(t => (
+                        <label key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', cursor:'pointer', borderBottom:'1px solid #1a1f2e', transition:'background 0.1s' }}
+                          onMouseEnter={e=>e.currentTarget.style.background='rgba(240,180,41,0.03)'}
+                          onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
+                          <input type="checkbox" checked={selTeams.includes(t.id)} onChange={()=>toggleTeam(t.id)} style={{ accentColor:'#f0b429' }} />
+                          {t.logo && <img src={`${BASE}${t.logo}`} style={{ width:22, height:22, borderRadius:6, objectFit:'cover' }} />}
+                          <span style={{ fontSize:13, color:'#cbd5e1', fontFamily:"'Geist',sans-serif" }}>{t.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  {summary && <div style={{ padding:'12px 16px', borderRadius:12, background:'rgba(52,211,153,0.06)', border:'1px solid rgba(52,211,153,0.2)', color:'#34d399', fontSize:13, fontWeight:500, marginBottom:16, fontFamily:"'Geist',sans-serif" }}>📋 {summary}</div>}
+                  <Btn type="submit" c="emerald" full disabled={loading || selTeams.length < 2}>{loading ? '⏳  Generating...' : '✓  Create Tournament & Generate Fixtures'}</Btn>
+                </form>
+              </Card>
+            )}
+
+            <div style={{ background:'#161a22', border:'1px solid #1e2433', borderRadius:20, overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <THead cols={['#','Trophy','Tournament','Format','Teams','']} />
+                <tbody>
+                  {tournaments.length === 0
+                    ? <tr><td colSpan="6" style={{ padding:'48px', textAlign:'center', color:'#2a3040', fontSize:13 }}>No tournaments yet</td></tr>
+                    : tournaments.map((t, i) => {
+                      const fMap = { league:{l:'League',c:'#38bdf8'}, knockout:{l:'Knockout',c:'#f87171'}, mixed:{l:'Mixed',c:'#a78bfa'} };
+                      const f = fMap[t.type] || fMap.league;
+                      return (
+                        <TRow key={t.id} cells={[
+                          <span style={{ color:'#2a3040', fontSize:11, fontWeight:700 }}>{String(i+1).padStart(2,'0')}</span>,
+                          t.trophy_image
+                            ? <img src={`${BASE}${t.trophy_image}`} style={{ width:36, height:36, objectFit:'contain', borderRadius:8 }} />
+                            : <div style={{ width:36, height:36, borderRadius:8, background:'rgba(240,180,41,0.06)', border:'1px solid rgba(240,180,41,0.12)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🏆</div>,
+                          <span style={{ fontSize:13, fontWeight:600, color:'#e2e8f0', cursor:'pointer' }} onClick={()=>navigate(`/tournament/${t.id}`)}
+                            onMouseEnter={e=>e.target.style.color='#f0b429'} onMouseLeave={e=>e.target.style.color='#e2e8f0'}>{t.name}</span>,
+                          <span style={{ fontSize:10, fontWeight:700, padding:'3px 9px', borderRadius:99, background:f.c+'15', color:f.c, border:`1px solid ${f.c}30`, letterSpacing:'0.5px' }}>{f.l}</span>,
+                          <span style={{ fontSize:13, color:'#3a4050' }}>{t.teams_count}</span>,
+                          <div style={{ display:'flex', gap:6 }}>
+                            <Btn c="amber" sm onClick={()=>openEditTourn(t)}>Edit</Btn>
+                            <Btn c="ghost" sm onClick={()=>navigate(`/tournament/${t.id}`)}>Open →</Btn>
+                          </div>,
+                        ]} />
+                      );
+                    })
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ══ REFEREES ══ */}
+        {tab === 'referees' && (
+          <div>
+            <PageTitle icon="⚖" title="Referees" action={<Btn c="sky" onClick={() => setShowRef(!showRef)}>{showRef ? '✕  Close' : '+  Add Referee'}</Btn>} />
+            <Toaster msg={refMsg} />
+
+            {showRef && (
+              <Card title="Add Referee" subtitle="An invitation email will be sent automatically">
+                <form onSubmit={createReferee} style={{ maxWidth: 420 }}>
+                  <div style={{ marginBottom: 14 }}><Lbl>Full Name *</Lbl><Inp placeholder="Ahmed Al-Karimi" required value={refData.name} onChange={e=>setRefData({...refData,name:e.target.value})} /></div>
+                  <div style={{ marginBottom: 14 }}><Lbl>Email Address *</Lbl><Inp type="email" placeholder="referee@sports.com" required value={refData.email} onChange={e=>setRefData({...refData,email:e.target.value})} /></div>
+                  <div style={{ marginBottom: 20 }}><FileInput label="Photo (optional)" value={refData.photo} onChange={e=>setRefData({...refData,photo:e.target.files[0]})} preview={refData.photo && URL.createObjectURL(refData.photo)} /></div>
+                  <Btn type="submit" c="sky" full disabled={loading}>{loading ? '⏳  Sending...' : '✉  Send Invitation'}</Btn>
+                </form>
+              </Card>
+            )}
+
+            <div style={{ background:'#161a22', border:'1px solid #1e2433', borderRadius:20, overflow:'hidden' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <THead cols={['#','Photo','Name','Email','']} />
+                <tbody>
+                  {referees.length === 0
+                    ? <tr><td colSpan="5" style={{ padding:'48px', textAlign:'center', color:'#2a3040', fontSize:13 }}>No referees registered yet</td></tr>
+                    : referees.map((r, i) => (
+                      <TRow key={r.id} cells={[
+                        <span style={{ color:'#2a3040', fontSize:11, fontWeight:700 }}>{String(i+1).padStart(2,'0')}</span>,
+                        r.photo
+                          ? <img src={`${BASE}${r.photo}`} style={{ width:36, height:36, borderRadius:9, objectFit:'cover', border:'1px solid rgba(56,189,248,0.25)' }} />
+                          : <div style={{ width:36, height:36, borderRadius:9, background:'rgba(56,189,248,0.06)', border:'1px solid rgba(56,189,248,0.15)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>⚖</div>,
+                        <span style={{ fontSize:13, fontWeight:600, color:'#fff' }}>{r.name}</span>,
+                        <span style={{ fontSize:12, color:'#3a4050' }}>{r.email}</span>,
+                        <div style={{ display:'flex', gap:6 }}>
+                          <Btn c="amber" sm onClick={()=>openEditRef(r)}>Edit</Btn>
+                          <Btn c="rose"  sm onClick={()=>deleteReferee(r.id, r.name)}>Delete</Btn>
+                        </div>,
+                      ]} />
+                    ))
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ══ EDIT TEAM MODAL ══ */}
+      {editTeam && (
+        <Modal title={`Edit Team — ${editTeam.name}`} subtitle="Update team information" onClose={() => setEditTeam(null)}>
+          <form onSubmit={saveEditTeam}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+              <div><Lbl>Team Name *</Lbl><Inp required value={editTeamData.name} onChange={e=>setEditTeamData({...editTeamData,name:e.target.value})} /></div>
+              <div><Lbl>Short Name</Lbl><Inp value={editTeamData.short_name} onChange={e=>setEditTeamData({...editTeamData,short_name:e.target.value})} /></div>
+              <div><Lbl>Founded Date</Lbl><Inp type="date" value={editTeamData.founded_date} onChange={e=>setEditTeamData({...editTeamData,founded_date:e.target.value})} /></div>
+              <div><Lbl>Kit Colors</Lbl><Inp value={editTeamData.colors} onChange={e=>setEditTeamData({...editTeamData,colors:e.target.value})} /></div>
+            </div>
+            <div style={{ marginBottom:20 }}>
+              <Lbl>Current Crest</Lbl>
+              {editTeam.logo && <img src={`${BASE}${editTeam.logo}`} style={{ width:48, height:48, borderRadius:12, objectFit:'cover', border:'1px solid #1e2433', marginBottom:10, display:'block' }} />}
+              <FileInput label="New Crest (optional)" value={editTeamLogo} onChange={e=>setEditTeamLogo(e.target.files[0])} preview={editTeamLogo && URL.createObjectURL(editTeamLogo)} />
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              <Btn type="button" c="ghost" full onClick={() => setEditTeam(null)}>Cancel</Btn>
+              <Btn type="submit" c="gold" full disabled={loading}>{loading ? '⏳ Saving...' : '✓ Save Changes'}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ══ EDIT TOURNAMENT MODAL ══ */}
+      {editTourn && (
+        <Modal title={`Edit Tournament — ${editTourn.name}`} subtitle="Update tournament details" onClose={() => setEditTourn(null)}>
+          <form onSubmit={saveEditTourn}>
+            <div style={{ marginBottom:14 }}><Lbl>Tournament Name *</Lbl><Inp required value={editTData.name} onChange={e=>setEditTData({...editTData,name:e.target.value})} /></div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+              <div><Lbl>Start Date</Lbl><Inp type="date" value={editTData.start_date} onChange={e=>setEditTData({...editTData,start_date:e.target.value})} /></div>
+              <div><Lbl>End Date</Lbl><Inp type="date" value={editTData.end_date} onChange={e=>setEditTData({...editTData,end_date:e.target.value})} /></div>
+            </div>
+            <div style={{ marginBottom:20 }}>
+              <Lbl>Current Trophy</Lbl>
+              {editTourn.trophy_image && <img src={`${BASE}${editTourn.trophy_image}`} style={{ width:56, height:56, objectFit:'contain', borderRadius:10, border:'1px solid rgba(240,180,41,0.2)', marginBottom:10, display:'block' }} />}
+              <FileInput label="New Trophy Image (optional)" value={editTTrophy} onChange={e=>setEditTTrophy(e.target.files[0])} preview={editTTrophy && URL.createObjectURL(editTTrophy)} />
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              <Btn type="button" c="ghost" full onClick={() => setEditTourn(null)}>Cancel</Btn>
+              <Btn type="submit" c="emerald" full disabled={loading}>{loading ? '⏳ Saving...' : '✓ Save Changes'}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ══ EDIT REFEREE MODAL ══ */}
+      {editRef && (
+        <Modal title={`Edit Referee — ${editRef.name}`} subtitle="Update referee information" onClose={() => setEditRef(null)} width={420}>
+          <form onSubmit={saveEditRef}>
+            <div style={{ marginBottom:14 }}><Lbl>Full Name *</Lbl><Inp required value={editRefData.name} onChange={e=>setEditRefData({...editRefData,name:e.target.value})} /></div>
+            <div style={{ marginBottom:14 }}><Lbl>Email *</Lbl><Inp type="email" required value={editRefData.email} onChange={e=>setEditRefData({...editRefData,email:e.target.value})} /></div>
+            <div style={{ marginBottom:20 }}>
+              {editRef.photo && <><Lbl>Current Photo</Lbl><img src={`${BASE}${editRef.photo}`} style={{ width:48, height:48, borderRadius:12, objectFit:'cover', border:'1px solid rgba(56,189,248,0.25)', marginBottom:10, display:'block' }} /></>}
+              <FileInput label="New Photo (optional)" value={editRefPhoto} onChange={e=>setEditRefPhoto(e.target.files[0])} preview={editRefPhoto && URL.createObjectURL(editRefPhoto)} />
+            </div>
+            <div style={{ display:'flex', gap:10 }}>
+              <Btn type="button" c="ghost" full onClick={() => setEditRef(null)}>Cancel</Btn>
+              <Btn type="submit" c="sky" full disabled={loading}>{loading ? '⏳ Saving...' : '✓ Save Changes'}</Btn>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      <style>{`
+        * { box-sizing: border-box; }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.35); }
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-thumb { background: #1e2433; border-radius: 99px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+      `}</style>
     </div>
   );
 };
